@@ -48,6 +48,9 @@ export const api = {
   // ── Flow: avatars → pillars/hub → learning content ──
   avatars: () => http.get('/play/avatars'),
   pillars: () => http.get('/play/pillars'),
+  // Learning roadmaps: each course references missions/bundles/tournaments with
+  // the player's own progress per item + course rollup + certificate.
+  courses: () => http.get('/play/courses'),
   missionContent: (missionId) => http.get(`/play/missions/${missionId}/content`),
 
   // ── Gameplay session (server-authoritative) ──

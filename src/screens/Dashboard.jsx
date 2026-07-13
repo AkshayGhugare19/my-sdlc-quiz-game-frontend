@@ -31,6 +31,7 @@ const MISSION_CTA = {
 
 const TABS = [
   { id: 'overview', label: '🏠 Overview' },
+  { id: 'courses', label: '📚 Courses' },
   { id: 'missions', label: '🎯 Missions' },
   { id: 'bundles', label: '📦 Mission Bundles' },
   { id: 'tournaments', label: '🏆 Tournaments' },
@@ -59,6 +60,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [team, setTeam] = useState(null);
   const [garage, setGarage] = useState(null);
+  const [courses, setCourses] = useState(null); // null = still loading / unavailable
   const [tab, setTab] = useState('overview');
 
   useEffect(() => {
@@ -76,6 +78,10 @@ export default function Dashboard() {
       .garage()
       .then((g) => alive && setGarage(g))
       .catch(() => alive && setGarage(null)); // graceful: garage card is simply hidden
+    api
+      .courses()
+      .then((c) => alive && setCourses(Array.isArray(c) ? c : []))
+      .catch(() => alive && setCourses([])); // graceful: tab just shows "no courses"
     return () => {
       alive = false;
     };
@@ -248,6 +254,8 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {tab === 'courses' && <CoursesPanel courses={courses} navigate={navigate} />}
 
         {tab === 'missions' && <MissionsPanel missions={missions} navigate={navigate} />}
 
@@ -566,6 +574,169 @@ function ChampionCard({ pillars, navigate }) {
           </div>
         ))}
       </div>
+    </motion.div>
+  );
+}
+
+// ── Courses (learning roadmaps) ──────────────────────────────────────────────
+// One card per course. A course is a roadmap that REFERENCES missions, bundles
+// and tournaments — each item shows its OWN progress (standalone mission,
+// bundle flow, tournament entry) and the header shows the course rollup.
+// Completing every item issues the course certificate automatically.
+function CoursesPanel({ courses, navigate }) {
+  if (courses === null) {
+    return <div className="panel rounded-3xl p-6 text-slate-400 text-sm">Loading courses…</div>;
+  }
+  if (courses.length === 0) {
+    return (
+      <div className="panel rounded-3xl p-6">
+        <h2 className="text-lg font-extrabold text-royal mb-1">Courses</h2>
+        <p className="text-slate-400 text-sm">
+          No courses published yet — your admin can build one from missions, bundles and tournaments.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-5">
+      {courses.map((c, i) => (
+        <CourseCard key={c.id} course={c} index={i} navigate={navigate} />
+      ))}
+    </div>
+  );
+}
+
+function CourseCard({ course: c, index, navigate }) {
+  const done = !!c.completed;
+  return (
+    <motion.div custom={index} variants={fadeUp} initial="hidden" animate="show" className="panel rounded-3xl p-6">
+      {/* Header: title + meta + rollup */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-start gap-3 min-w-0">
+          {c.coverUrl ? (
+            <img src={c.coverUrl} alt="" className="w-14 h-14 rounded-2xl object-cover ring-1 ring-royal/15 shrink-0" />
+          ) : (
+            <div className="w-14 h-14 rounded-2xl grid place-items-center text-2xl bg-royal/5 shrink-0">📚</div>
+          )}
+          <div className="min-w-0">
+            <h2 className="text-lg font-extrabold text-royal leading-tight">{c.title}</h2>
+            {c.summary && <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{c.summary}</p>}
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              {c.difficulty && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
+                  {c.difficulty}
+                </span>
+              )}
+              {c.estimatedMin != null && (
+                <span className="text-xs text-slate-400 font-semibold">⏱ ~{c.estimatedMin} min</span>
+              )}
+              {done && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                  COMPLETED
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-2xl font-extrabold text-royal">{Math.round(c.completionPct ?? 0)}%</div>
+          <div className="text-[10px] font-semibold tracking-widest text-slate-400">COURSE PROGRESS</div>
+        </div>
+      </div>
+      <div className="mt-3">
+        <ProgressBar pct={c.completionPct} />
+      </div>
+
+      {/* Certificate */}
+      {c.certificateSerial ? (
+        <div className="mt-3 rounded-2xl bg-amber-50 ring-1 ring-amber-200 px-4 py-2.5 text-sm font-bold text-amber-700">
+          📜 Certificate earned — serial {c.certificateSerial}
+        </div>
+      ) : (
+        c.hasCertificateTemplate && (
+          <div className="mt-3 text-xs text-slate-400 font-semibold">
+            📜 Finish every item below to earn this course&apos;s certificate.
+          </div>
+        )
+      )}
+
+      {/* Missions */}
+      {c.missions?.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-1">🎯 Missions</div>
+          <div className="divide-y divide-slate-100">
+            {c.missions.map((m) => (
+              <div key={m.id} className="flex items-center justify-between gap-3 py-2.5">
+                <div className="min-w-0 font-semibold text-slate-700 text-sm truncate">{m.title}</div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs text-slate-400 font-semibold">
+                    ⭐ {m.starsEarned ?? 0}/{m.maxStars ?? 5}
+                  </span>
+                  <StatusPill status={m.status} />
+                  <button
+                    onClick={() => navigate(`/learn/${m.id}?missionId=${m.id}`)}
+                    className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
+                  >
+                    {MISSION_CTA[m.status] || '▶ Play'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Mission bundles */}
+      {c.bundles?.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-1">📦 Mission Bundles</div>
+          {c.bundles.map((b) => (
+            <div key={b.id} className="rounded-2xl bg-royal/[0.03] ring-1 ring-royal/10 px-4 py-3 mb-2">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="font-bold text-slate-700 text-sm">{b.title}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-semibold">
+                    ⭐ {b.starsEarned ?? 0}/{b.maxStars ?? 5}
+                  </span>
+                  <span className="text-xs text-slate-400">{Math.round(b.completionPct ?? 0)}%</span>
+                  <StatusPill status={b.status} />
+                </div>
+              </div>
+              <div className="divide-y divide-slate-100 mt-1">
+                {(b.missions ?? []).map((m) => (
+                  <div key={m.id} className="flex items-center justify-between gap-3 py-2">
+                    <div className="min-w-0 text-sm font-semibold text-slate-600 truncate">{m.title}</div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-slate-400 font-semibold">
+                        ⭐ {m.starsEarned ?? 0}/{m.maxStars ?? 5}
+                      </span>
+                      <StatusPill status={m.status} />
+                      <button
+                        onClick={() => navigate(`/learn/${m.id}?missionBundleId=${m.bundleId}`)}
+                        className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
+                      >
+                        {MISSION_CTA[m.status] || '▶ Play'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Tournaments */}
+      {c.tournaments?.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-1">🏆 Tournaments</div>
+          <div className="divide-y divide-slate-100">
+            {c.tournaments.map((t) => (
+              <TournamentRow key={t.id} tournament={t} />
+            ))}
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }
