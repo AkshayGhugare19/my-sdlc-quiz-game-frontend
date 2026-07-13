@@ -1,1 +1,1 @@
-# my-sdlc-quiz-game-frontend
+# sdlc-quiz-game-frontend

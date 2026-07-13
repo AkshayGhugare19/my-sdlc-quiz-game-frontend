@@ -1,0 +1,234 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Themes ──────────────────────────────────────────────────────────────
+   Every brand color and structural surface reads from these variables, so
+   switching `data-theme` on <html> reskins the whole game (see theme.js).
+   Color tokens are RGB triplets so Tailwind opacity modifiers keep working. */
+:root,
+[data-theme='ocean'] {
+  color-scheme: light;
+  /* brand tokens (tailwind: royal / neon / deep / night) */
+  --c-royal: 11 61 145;
+  --c-neon: 34 211 238;
+  --c-deep: 15 27 51;
+  --c-night: 11 18 32;
+  /* muted grays (tailwind slate 50–700) */
+  --s-50: 248 250 252;
+  --s-100: 241 245 249;
+  --s-200: 226 232 240;
+  --s-300: 203 213 225;
+  --s-400: 148 163 184;
+  --s-500: 100 116 139;
+  --s-600: 71 85 105;
+  --s-700: 51 65 85;
+  /* structural surfaces */
+  --bg: radial-gradient(1200px 820px at 50% -10%, #eaf2ff 0%, #f2f6fc 55%, #eef3fb 100%);
+  --ink: #0f1b33;
+  --panel-bg: #ffffff;
+  --panel-border: rgba(11, 61, 145, 0.1);
+  --panel-shadow: 0 18px 40px rgba(15, 27, 51, 0.08);
+  --panel-soft-bg: rgba(255, 255, 255, 0.75);
+  --field-bg: #f5f8fd;
+  --field-border: rgba(11, 61, 145, 0.14);
+  --placeholder: #90a0bd;
+  --btn-grad: linear-gradient(120deg, #0b3d91, #22d3ee);
+  --badge-grad: linear-gradient(150deg, #12203c, #0b3d91);
+}
+
+[data-theme='sunset'] {
+  color-scheme: light;
+  --c-royal: 194 65 12;
+  --c-neon: 245 158 11;
+  --c-deep: 59 35 8;
+  --c-night: 31 18 6;
+  --bg: radial-gradient(1200px 820px at 50% -10%, #ffe8d6 0%, #fdf1e3 55%, #faeede 100%);
+  --ink: #33200f;
+  --panel-bg: #fffdf9;
+  --panel-border: rgba(194, 65, 12, 0.12);
+  --panel-shadow: 0 18px 40px rgba(80, 40, 10, 0.1);
+  --panel-soft-bg: rgba(255, 252, 246, 0.78);
+  --field-bg: #fdf5ec;
+  --field-border: rgba(194, 65, 12, 0.16);
+  --placeholder: #c0a78f;
+  --btn-grad: linear-gradient(120deg, #c2410c, #f59e0b);
+  --badge-grad: linear-gradient(150deg, #3c1f0a, #c2410c);
+}
+
+[data-theme='forest'] {
+  color-scheme: light;
+  --c-royal: 22 101 52;
+  --c-neon: 52 211 153;
+  --c-deep: 16 37 26;
+  --c-night: 8 25 17;
+  --bg: radial-gradient(1200px 820px at 50% -10%, #e2f5e9 0%, #eef8f0 55%, #e9f4ec 100%);
+  --ink: #10251a;
+  --panel-bg: #ffffff;
+  --panel-border: rgba(22, 101, 52, 0.12);
+  --panel-shadow: 0 18px 40px rgba(16, 60, 36, 0.09);
+  --panel-soft-bg: rgba(255, 255, 255, 0.75);
+  --field-bg: #f2f9f4;
+  --field-border: rgba(22, 101, 52, 0.16);
+  --placeholder: #93b3a0;
+  --btn-grad: linear-gradient(120deg, #166534, #34d399);
+  --badge-grad: linear-gradient(150deg, #0e2b1b, #166534);
+}
+
+[data-theme='midnight'] {
+  color-scheme: dark;
+  --c-royal: 125 211 252; /* headings turn light blue on dark surfaces */
+  --c-neon: 34 211 238;
+  --c-deep: 232 238 252;
+  --c-night: 11 18 32;
+  /* flipped grays: light text shades, dark surface shades */
+  --s-50: 23 34 61;
+  --s-100: 27 40 70;
+  --s-200: 36 52 90;
+  --s-300: 46 66 112;
+  --s-400: 124 141 176;
+  --s-500: 148 165 199;
+  --s-600: 176 191 220;
+  --s-700: 201 212 232;
+  --bg: radial-gradient(1200px 820px at 50% -10%, #12203c 0%, #0d1730 55%, #0b1220 100%);
+  --ink: #e8eefc;
+  --panel-bg: #121e38;
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --panel-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  --panel-soft-bg: rgba(18, 30, 56, 0.75);
+  --field-bg: #0e1a33;
+  --field-border: rgba(255, 255, 255, 0.12);
+  --placeholder: #5c6d8e;
+  --btn-grad: linear-gradient(120deg, #0b3d91, #22d3ee);
+  --badge-grad: linear-gradient(150deg, #12203c, #0b3d91);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --c-royal: 148 209 255; /* headings turn soft light blue on near-black */
+  --c-neon: 34 211 238;
+  --c-deep: 236 240 248;
+  --c-night: 6 8 12;
+  /* flipped neutral grays: light text shades, dark surface shades */
+  --s-50: 26 29 36;
+  --s-100: 31 35 43;
+  --s-200: 42 47 58;
+  --s-300: 55 61 74;
+  --s-400: 132 143 162;
+  --s-500: 156 166 184;
+  --s-600: 182 191 206;
+  --s-700: 206 213 224;
+  --bg: radial-gradient(1200px 820px at 50% -10%, #16181e 0%, #101216 55%, #0a0c10 100%);
+  --ink: #ecf0f8;
+  --panel-bg: #16191f;
+  --panel-border: rgba(255, 255, 255, 0.07);
+  --panel-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  --panel-soft-bg: rgba(22, 25, 31, 0.78);
+  --field-bg: #101319;
+  --field-border: rgba(255, 255, 255, 0.11);
+  --placeholder: #6b7689;
+  --btn-grad: linear-gradient(120deg, #155e75, #22d3ee);
+  --badge-grad: linear-gradient(150deg, #1a1d24, #155e75);
+}
+
+/* White surfaces (race answer cards, pillar cards, coach bubbles) stay white
+   in every theme — so on the dark themes their text must stay dark too. */
+[data-theme='midnight'] :is(.bg-white, .bg-white\/90) :is(.text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700),
+[data-theme='midnight'] :is(.bg-white, .bg-white\/90):is(.text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700),
+[data-theme='dark'] :is(.bg-white, .bg-white\/90) :is(.text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700),
+[data-theme='dark'] :is(.bg-white, .bg-white\/90):is(.text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700) {
+  color: rgb(71 85 105);
+}
+[data-theme='midnight'] :is(.bg-white, .bg-white\/90).text-royal,
+[data-theme='dark'] :is(.bg-white, .bg-white\/90).text-royal {
+  color: #0b3d91;
+}
+[data-theme='midnight'] :is(.bg-white, .bg-white\/90).border-slate-200,
+[data-theme='midnight'] :is(.bg-white, .bg-white\/90) .border-slate-200,
+[data-theme='dark'] :is(.bg-white, .bg-white\/90).border-slate-200,
+[data-theme='dark'] :is(.bg-white, .bg-white\/90) .border-slate-200 {
+  border-color: rgb(226 232 240);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Poppins', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  overflow-x: hidden;
+}
+
+/* ── Panels ──────────────────────────────────────────────────────────────
+   Rounded cards used across every flow screen. */
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+}
+.panel-soft {
+  background: var(--panel-soft-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 26px rgba(15, 27, 51, 0.06);
+}
+
+/* Frosted dark panel — used ONLY over the dark Phaser race canvas. */
+.glass {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(14px);
+}
+
+/* Small dark rounded number badge at the top-left of each flow screen. */
+.num-badge {
+  @apply grid place-items-center rounded-xl font-extrabold text-white;
+  width: 2.5rem;
+  height: 2.5rem;
+  background: var(--badge-grad);
+  box-shadow: 0 8px 18px rgb(var(--c-royal) / 0.28);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────*/
+.btn {
+  @apply rounded-xl px-6 py-3 font-semibold transition active:scale-95;
+}
+.btn-primary {
+  @apply btn text-white;
+  background: var(--btn-grad);
+  box-shadow: 0 12px 28px rgb(var(--c-neon) / 0.28);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+}
+.btn-ghost {
+  @apply btn;
+  color: rgb(var(--c-royal));
+  background: var(--panel-bg);
+  border: 1px solid var(--field-border);
+}
+
+/* Small pill (back button, chips). */
+.pill {
+  @apply inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold transition active:scale-95;
+}
+
+/* Input field on panels. */
+.field {
+  @apply w-full rounded-xl px-4 py-3 outline-none transition;
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  color: var(--ink);
+}
+.field:focus {
+  border-color: rgb(var(--c-neon));
+  box-shadow: 0 0 0 3px rgb(var(--c-neon) / 0.18);
+}
+.field::placeholder {
+  color: var(--placeholder);
+}
