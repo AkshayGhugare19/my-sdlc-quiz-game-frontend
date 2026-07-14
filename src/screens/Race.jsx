@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import Phaser from 'phaser';
 import { AnimatePresence, motion } from 'framer-motion';
-import PhaserGame from '../game/PhaserGame';
+import ThreeGame, { createEmitter } from '../game/ThreeGame';
 import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
 import BackButton from '../components/BackButton';
@@ -53,8 +52,31 @@ export default function Race() {
   const player = useGameStore((s) => s.player);
   const equipped = player?.garage?.find((g) => g.isEquipped)?.accessory || null;
 
-  const emitterRef = useRef(new Phaser.Events.EventEmitter());
+  const emitterRef = useRef(createEmitter());
   const sceneRef = useRef(null);
+  const cardRowRef = useRef(null);
+
+  // The 3D scene reports each lane's screen X (fraction of the viewport) every
+  // frame; pin the answer bubbles over their own lanes via direct styles (no
+  // per-frame re-render). Fractions are viewport-relative while the row is
+  // inside a padded container, so convert to pixels against the row's rect.
+  const onLaneLayout = useCallback((xs) => {
+    const row = cardRowRef.current;
+    if (!row) return;
+    const rect = row.getBoundingClientRect();
+    const els = Array.from(row.children);
+    const cardW = els[0]?.offsetWidth || 160;
+    const minSep = cardW + 12; // cards may never overlap
+    let pos = xs.map((x) => x * window.innerWidth - rect.left);
+    // keep every card fully inside the row…
+    pos = pos.map((p) => Math.min(Math.max(p, cardW / 2), rect.width - cardW / 2));
+    // …and enforce the minimum gap (push right, then settle back left)
+    for (let i = 1; i < pos.length; i++) pos[i] = Math.max(pos[i], pos[i - 1] + minSep);
+    for (let i = pos.length - 2; i >= 0; i--) pos[i] = Math.min(pos[i], pos[i + 1] - minSep);
+    els.forEach((el, i) => {
+      if (pos[i] != null) el.style.left = `${Math.round(pos[i])}px`;
+    });
+  }, []);
   const sessionRef = useRef(null);
   const lanesRef = useRef([]);
   const questionIdRef = useRef(null); // id of the question currently on screen
@@ -75,8 +97,9 @@ export default function Race() {
 
   // 1. Start session. "/race/tournament" is a tournament race — no mission;
   // the server draws questions from the tournament's own configured pool.
-  // "/race/quick" is a casual quick race — random questions on every attempt,
-  // nothing recorded. A "?missionBundleId=<id>" param marks a bundle-context race.
+  // "/race/quick" is a casual quick race — random questions on every attempt;
+  // it earns XP/stars/coins but records no mission or bundle progress.
+  // A "?missionBundleId=<id>" param marks a bundle-context race.
   const isTournamentRace = missionId === 'tournament';
   const isQuickRace = missionId === 'quick';
   useEffect(() => {
@@ -222,14 +245,15 @@ export default function Race() {
 
   return (
     <div className="relative h-screen overflow-hidden">
-      {/* Phaser road + kart as the full background */}
+      {/* three.js circuit + car as the full background */}
       <div className="absolute inset-0">
-        <PhaserGame
+        <ThreeGame
           emitter={emitterRef.current}
           laneCount={boot.mission.laneCount}
           avatarKey={avatar?.key}
           avatarName={avatar?.name}
-          firstQuestion={boot.question}
+          accessory={equipped}
+          onLaneLayout={onLaneLayout}
           onReady={(scene) => (sceneRef.current = scene)}
         />
       </div>
@@ -301,8 +325,8 @@ export default function Race() {
           </div>
         </div>
 
-        {/* Answer cards A/B/C */}
-        <div className="flex justify-center gap-3 md:gap-6 mt-6 pointer-events-auto">
+        {/* Answer cards A/B/C — each pinned over its own lane (onLaneLayout) */}
+        <div ref={cardRowRef} className="relative mt-4 md:mt-6 h-48 md:h-56 pointer-events-auto">
           {lanes.map((lane, i) => {
             const isSel = selected === i;
             const fbState = feedback
@@ -315,12 +339,18 @@ export default function Race() {
             const color = LANE_COLORS[i % LANE_COLORS.length];
             const tint = laneTint(color);
             return (
-              <motion.button
+              // wrapper carries the lane-anchored position; framer-motion owns
+              // the button's own transform, so translateX(-50%) lives here
+              <div
                 key={lane.id}
+                className="absolute top-0"
+                style={{ left: `${(((i + 0.5) / lanes.length) * 100).toFixed(2)}%`, transform: 'translateX(-50%)' }}
+              >
+              <motion.button
                 whileHover={{ y: -4 }}
                 animate={{ scale: isSel ? 1.06 : 1, y: isSel ? -6 : 0 }}
                 onClick={() => (isSel ? commit(i) : chooseLane(i))}
-                className="relative w-32 md:w-44"
+                className="relative w-28 sm:w-32 md:w-44"
               >
                 {/* card body — pale wash of the lane color, speech-bubble shape */}
                 <div
@@ -364,6 +394,7 @@ export default function Race() {
                   }}
                 />
               </motion.button>
+              </div>
             );
           })}
         </div>
