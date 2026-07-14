@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
+import PasswordInput from '../components/PasswordInput';
 
 // New-learner signup. The player picks their organization and a role —
 // EMPLOYEE (full experience) or GUEST (demo mode). Learner roles are enforced
@@ -74,7 +75,7 @@ export default function Signup() {
         <input type="email" {...register('email', { required: true })} className="field mb-4" />
 
         <label className="block text-sm mb-1 font-semibold text-slate-500">Password</label>
-        <input type="password" {...register('password', { required: true, minLength: 6 })} className="field mb-6" />
+        <PasswordInput {...register('password', { required: true, minLength: 6 })} className="field" wrapperClassName="mb-6" />
 
         {error && <div className="text-red-500 text-sm mb-4">{error}</div>}
 
