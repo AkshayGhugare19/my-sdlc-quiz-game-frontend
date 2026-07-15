@@ -1,7 +1,7 @@
 // ============================================================================
-// The SINGLE place the racing game talks to GamifiedLearning .
+// The SINGLE place the racing game talks to Gamru .
 // There is no learning-games backend — every endpoint below is served by the
-// GamifiedLearning  API (VITE_GAMRU_API_URL). The game is "dumb": it renders whatever
+// Gamru  API (VITE_GAMRU_API_URL). The game is "dumb": it renders whatever
 // the engine returns and posts raw player moves; the engine owns all rules.
 // ============================================================================
 import axios from 'axios';

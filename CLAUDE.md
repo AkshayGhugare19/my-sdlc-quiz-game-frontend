@@ -2,7 +2,7 @@
 
 Frontend-only racing **quiz game** for EMPLOYEE/GUEST players. React 18 + Vite 6 + Tailwind 3 +
 **three.js** + zustand + react-router 6 + react-hook-form + framer-motion. No backend of its own —
-it calls the GamifiedLearning API directly (sibling repo `my-sdlc-quiz-gamru-backend`, `:4000`).
+it calls the Gamru API directly (sibling repo `my-sdlc-quiz-gamru-backend`, `:4000`).
 Gameplay is **server-authoritative**: this client renders the question, posts which lane the player
 steered into, and displays whatever the server returns. All art is **procedural** (SVG/canvas/three.js
 geometry) — there are no image assets. `socket.io-client` is installed but UNUSED.

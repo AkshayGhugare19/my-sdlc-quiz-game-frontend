@@ -12,7 +12,7 @@ const RARITY_STYLE = {
   legendary: 'bg-amber-100 text-amber-600',
 };
 
-// Accessories Garage — the FULL catalog from GamifiedLearning : unlocked items can be
+// Accessories Garage — the FULL catalog from Gamru : unlocked items can be
 // equipped on the kart, locked ones stay visible with a padlock badge. Clicking
 // a locked item opens the unlock modal: why it's locked, every requirement with
 // the player's live progress, and where to go next.

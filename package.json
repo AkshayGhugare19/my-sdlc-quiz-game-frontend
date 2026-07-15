@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "SDLC  Quest — racing learning game (frontend only, calls GamifiedLearning  API directly)",
+  "description": "SDLC  Quest — racing learning game (frontend only, calls Gamru  API directly)",
   "scripts": {
     "dev": "vite --port 5273",
     "build": "vite build",
