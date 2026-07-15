@@ -1,4 +1,15 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+// A rigged, animated character loaded at runtime and driven by an AnimationMixer.
+// If it fails to load, the procedural cartoon runner (buildCharacter) stays as a
+// graceful fallback. The loader is chosen by file extension, so this can be a
+// Mixamo .fbx (single run clip) or a multi-clip .glb interchangeably.
+// Active: a Mixamo (Adobe) "cartoon boy" running character (.fbx, With Skin,
+// In Place). See public/models/CREDITS.txt. To change character, drop a new
+// rigged .fbx/.glb here and update this URL.
+const RUNNER_MODEL_URL = `${import.meta.env.BASE_URL}models/running.fbx`;
 
 // Subway-Surfer style endless runner — a drop-in alternative to ThreeRaceScene.
 // Instead of a car on a sunset circuit, a character sprints down parallel train
@@ -25,7 +36,7 @@ const RUNNER_COLORS = {
 
 const LANE_W = 3.2; // world units between adjacent tracks
 const TRACK_LEN = 660; // how far the tracks stretch ahead
-const WORLD_SPEED = 34; // units/sec at full sprint
+const WORLD_SPEED = 22; // units/sec at full sprint (calmer pace)
 const SPAN = 720; // recycle distance for scrolling scenery
 const GRAVITY = 30; // units/sec² for the jump arc (physics-inspired hop)
 
@@ -59,7 +70,10 @@ function skyTexture() {
 }
 
 // Gravel + timber-sleeper track bed. Scrolls along Z so the sleepers fly past.
-function ballastTexture(laneCount) {
+// `laneFracs` = each lane centre as a 0..1 fraction across the bed width, so the
+// sleepers line up exactly under the rails (and the runner) on EVERY lane — not
+// just the middle one. `sleeperWFrac` = sleeper width as a fraction of the bed.
+function ballastTexture(laneFracs, sleeperWFrac) {
   return canvasTexture(256, 256, (ctx, w, h) => {
     // crushed-stone ballast base
     ctx.fillStyle = '#6a6f78';
@@ -70,11 +84,11 @@ function ballastTexture(laneCount) {
       const sz = 1 + Math.random() * 2;
       ctx.fillRect(Math.random() * w, Math.random() * h, sz, sz);
     }
-    // creosote timber sleepers, one row per repeat, under each lane
+    // creosote timber sleepers, one row per repeat, centred under each lane
+    const bw = sleeperWFrac * w;
     for (let y = 18; y < h; y += 40) {
-      for (let l = 0; l < laneCount; l++) {
-        const cx = ((l + 0.5) / laneCount) * w;
-        const bw = w / laneCount - 10;
+      for (const f of laneFracs) {
+        const cx = f * w;
         const grd = ctx.createLinearGradient(0, y, 0, y + 16);
         grd.addColorStop(0, '#4e3b28');
         grd.addColorStop(0.5, '#3a2c1c');
@@ -201,6 +215,39 @@ function cloudSprite() {
   return s;
 }
 
+// Full-sky cloud layer painted on a big rotating dome. Soft, overlapping puffs
+// concentrated in the upper band (transparent toward the horizon), tiled
+// horizontally so it wraps seamlessly as the dome slowly turns (= wind).
+function cloudLayerTexture() {
+  return canvasTexture(1024, 512, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h);
+    const puff = (x, y, r, a) => {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(255,255,255,${a})`);
+      g.addColorStop(0.55, `rgba(255,255,255,${a * 0.5})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    for (let i = 0; i < 34; i++) {
+      const cx = Math.random() * w;
+      const cy = h * (0.08 + Math.random() * 0.46); // upper band of the canvas
+      const baseR = 44 + Math.random() * 76;
+      const alpha = 0.55 + Math.random() * 0.4;
+      for (let k = 0, n = 3 + ((Math.random() * 4) | 0); k < n; k++) {
+        const dx = (Math.random() - 0.5) * baseR * 2.2;
+        const dy = (Math.random() - 0.5) * baseR * 0.7;
+        const r = baseR * (0.6 + Math.random() * 0.7);
+        puff(cx + dx, cy + dy, r, alpha);
+        if (cx + dx - r < 0) puff(cx + dx + w, cy + dy, r, alpha); // wrap for seamless tiling
+        if (cx + dx + r > w) puff(cx + dx - w, cy + dy, r, alpha);
+      }
+    }
+  });
+}
+
 // Player name tag that floats over the runner (mirrors the car's rear-wing plate).
 function namePlateTexture(name) {
   return canvasTexture(256, 64, (ctx, w, h) => {
@@ -217,6 +264,98 @@ function namePlateTexture(name) {
     ctx.textBaseline = 'middle';
     ctx.fillText(name, w / 2, h / 2 + 1);
   });
+}
+
+// Stepped ramp for MeshToonMaterial — gives the flat, cel-shaded cartoon look
+// (a few hard light bands instead of smooth shading). Shared by every part.
+function toonRampTexture() {
+  const c = document.createElement('canvas');
+  c.width = 5;
+  c.height = 1;
+  const ctx = c.getContext('2d');
+  ['#8f8f8f', '#b6b6b6', '#d8d8d8', '#f1f1f1', '#ffffff'].forEach((b, i) => {
+    ctx.fillStyle = b;
+    ctx.fillRect(i, 0, 1, 1);
+  });
+  const t = new THREE.CanvasTexture(c);
+  t.minFilter = THREE.NearestFilter;
+  t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  return t;
+}
+
+// Lighten (f>1) / darken (f<1) a hex colour, clamped.
+function shade(hex, f) {
+  const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+  const m = (v) => Math.max(0, Math.min(255, Math.round(v * f)));
+  return (m(r) << 16) | (m(g) << 8) | m(b);
+}
+
+// Cartoon outline: for every mesh flagged `userData.ol`, add a slightly larger
+// back-faces-only dark copy (inverted-hull) so the character reads with the
+// crisp dark edge of a mobile-game character. Cheap and asset-free.
+function addToonOutlines(root, color = 0x1b1d24) {
+  const mat = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
+  const clones = [];
+  root.traverse((o) => {
+    if (o.isMesh && o.userData.ol) {
+      const c = new THREE.Mesh(o.geometry, mat);
+      c.position.copy(o.position);
+      c.quaternion.copy(o.quaternion);
+      c.scale.copy(o.scale).multiplyScalar(1.07);
+      c.castShadow = c.receiveShadow = false;
+      clones.push([o.parent, c]);
+    }
+  });
+  clones.forEach(([p, c]) => p.add(c));
+}
+
+// Dispose a subtree's geometry + materials (used when replacing procedural
+// scenery). NEVER call this on cloned GLB trees — they SHARE geometry/materials.
+function disposeObj(o) {
+  o.traverse((x) => {
+    x.geometry?.dispose?.();
+    const mats = Array.isArray(x.material) ? x.material : [x.material];
+    mats.forEach((m) => {
+      if (!m) return;
+      m.map?.dispose?.();
+      m.dispose?.();
+    });
+  });
+}
+
+// Turn a node from a loaded model into a reusable, upright prototype: bake its
+// world orientation, normalise to `targetH` units tall, and centre it with its
+// feet at y=0 so it can be dropped anywhere. Returns null if degenerate.
+function normalizedProto(obj, targetH) {
+  obj.updateWorldMatrix(true, false);
+  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  obj.matrixWorld.decompose(pos, quat, scl);
+  const clone = obj.clone(true);
+  clone.position.set(0, 0, 0);
+  clone.quaternion.copy(quat);
+  clone.scale.copy(scl);
+  clone.traverse((m) => {
+    if (m.isMesh) {
+      m.castShadow = true;
+      m.receiveShadow = false;
+      m.frustumCulled = true;
+    }
+  });
+  const g = new THREE.Group();
+  g.add(clone);
+  let box = new THREE.Box3().setFromObject(g);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  if (size.y < 0.01) return null;
+  clone.scale.multiplyScalar(targetH / size.y);
+  box = new THREE.Box3().setFromObject(g);
+  const c = new THREE.Vector3();
+  box.getCenter(c);
+  clone.position.x -= c.x;
+  clone.position.z -= c.z;
+  clone.position.y -= box.min.y;
+  return g;
 }
 
 // ── scene ────────────────────────────────────────────────────────────────────
@@ -247,6 +386,13 @@ export default class ThreeSubwayScene {
     this.stumble = 0; // trip animation timer on a wrong answer
     this.dustOn = false;
 
+    // rigged-model state (falls back to the procedural runner until/unless loaded)
+    this.useModel = false;
+    this.mixer = null;
+    this.actions = {};
+    this.activeAction = null;
+    this.singleAction = null; // set when the model has just one clip (Mixamo run)
+
     this.bedW = laneCount * LANE_W + 2.4;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -270,6 +416,7 @@ export default class ThreeSubwayScene {
     this.buildLights();
     this.buildWorld();
     this.buildCharacter();
+    this.loadRunnerModel(); // async; swaps in the rigged model when ready
 
     this.onSetLane = (lane) => this.steerTo(lane);
     this.emitter?.on('setLane', this.onSetLane);
@@ -333,8 +480,11 @@ export default class ThreeSubwayScene {
       return mesh;
     };
 
-    // ballast track bed with flying sleepers
-    addScrollPlane(ballastTexture(this.laneCount), this.bedW, 0, 0, TRACK_LEN / 8);
+    // ballast track bed with flying sleepers — sleepers centred on the real
+    // lane positions (so every track lines up under its rails, not just the mid)
+    const laneFracs = [];
+    for (let l = 0; l < this.laneCount; l++) laneFracs.push(this.laneX(l) / this.bedW + 0.5);
+    addScrollPlane(ballastTexture(laneFracs, 2.0 / this.bedW), this.bedW, 0, 0, TRACK_LEN / 8);
     // raised concrete platforms either side of the tracks
     addScrollPlane(pavementTexture(), 9, -(halfBed + 4.5), 0.18, TRACK_LEN / 12);
     addScrollPlane(pavementTexture(), 9, halfBed + 4.5, 0.18, TRACK_LEN / 12);
@@ -373,13 +523,37 @@ export default class ThreeSubwayScene {
       this.scene.add(b);
     }
 
-    // clouds
-    [[-120, 70, -300, 90], [90, 90, -360, 120], [-30, 110, -420, 150]].forEach(([x, y, z, sc]) => {
+    // Full-sky cloud dome — a big inverted sphere of soft clouds that slowly
+    // rotates (wind), giving continuous moving cloud cover behind the skyline.
+    const domeTex = cloudLayerTexture();
+    domeTex.wrapS = THREE.RepeatWrapping;
+    domeTex.repeat.set(3, 1);
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(760, 48, 24),
+      new THREE.MeshBasicMaterial({
+        map: domeTex, transparent: true, side: THREE.BackSide,
+        depthWrite: false, fog: false, opacity: 0.92,
+      }),
+    );
+    dome.position.y = -40; // drop it so the cloud band sits above the horizon
+    dome.renderOrder = -1; // behind everything else
+    this.scene.add(dome);
+    this.cloudDome = dome;
+
+    // nearer drifting cloud puffs for parallax (animated in update())
+    this.clouds = [];
+    const CLOUD_MINX = -260, CLOUD_MAXX = 260, CLOUD_SPAN = CLOUD_MAXX - CLOUD_MINX;
+    for (let i = 0; i < 6; i++) {
       const cl = cloudSprite();
-      cl.position.set(x, y, z);
-      cl.scale.set(sc, sc * 0.5, 1);
+      const y = 55 + (i % 4) * 24;
+      const z = -230 - (i % 4) * 55;
+      const sc = 70 + (i % 4) * 28;
+      cl.position.set(CLOUD_MINX + Math.random() * CLOUD_SPAN, y, z);
+      cl.scale.set(sc, sc * (0.42 + Math.random() * 0.12), 1);
+      cl.material.opacity = 0.65 + Math.random() * 0.2;
       this.scene.add(cl);
-    });
+      this.clouds.push({ sprite: cl, speed: 1.2 + Math.random() * 1.6, minX: CLOUD_MINX, maxX: CLOUD_MAXX });
+    }
 
     // ── shared textures reused across many pooled meshes ──
     this.buildingTexes = [
@@ -406,14 +580,21 @@ export default class ThreeSubwayScene {
     // street lamps + trees + benches lining the platforms
     this.spawnRow(() => this.makeLamp(-1), 8, 90, { offset: 66 });
     this.spawnRow(() => this.makeLamp(1), 8, 90, { offset: 24 });
-    this.spawnRow(() => this.makeTree(-1), 6, 120, { offset: 40 });
-    this.spawnRow(() => this.makeTree(1), 6, 120, { offset: 100 });
+    // lusher treeline: a dense near row + a taller row set further back, both sides
+    this.spawnRow(() => this.makeTree(-1), 11, 60, { offset: 18 });
+    this.spawnRow(() => this.makeTree(1), 11, 60, { offset: 48 });
+    this.spawnRow(() => this.makeTree(-1, true), 8, 84, { offset: 74 });
+    this.spawnRow(() => this.makeTree(1, true), 8, 84, { offset: 36 });
     this.spawnRow(() => this.makeBench(-1), 4, 180, { offset: 150 });
     // trains rushing past on the outer side tracks
     this.spawnRow((i) => this.makeTrain(-1, i), 2, 300, { offset: 60 });
     this.spawnRow((i) => this.makeTrain(1, i), 2, 300, { offset: 210 });
     // signal masts with red/green aspects
     this.spawnRow(() => this.makeSignal(1), 3, 240, { offset: 130 });
+
+    // upgrade the procedural cone-trees to the GLB forest trees, if they load
+    this.treeMovers = this.movers.filter((m) => m.obj.userData.isTree);
+    this.loadTrees();
   }
 
   // Lay `count` copies of a scenery item spaced `spacing` apart; they recycle
@@ -710,7 +891,7 @@ export default class ThreeSubwayScene {
     return g;
   }
 
-  makeTree(side) {
+  makeTree(side, far = false) {
     const g = new THREE.Group();
     const trunk = new THREE.Mesh(
       new THREE.CylinderGeometry(0.2, 0.3, 2.0, 6),
@@ -725,8 +906,14 @@ export default class ThreeSubwayScene {
     crown.position.y = 3.1;
     crown.castShadow = true;
     g.add(trunk, crown);
-    g.position.set(side * (this.bedW / 2 + 6.5 + Math.random() * 3), 0, 0);
-    g.scale.setScalar(0.85 + Math.random() * 0.5);
+    // `far` trees sit further back (behind the near row) for a layered treeline
+    const dist = far ? 13 + Math.random() * 6 : 6.5 + Math.random() * 3;
+    g.position.set(side * (this.bedW / 2 + dist), 0, 0);
+    g.scale.setScalar((far ? 1.15 : 0.85) + Math.random() * 0.5);
+    // tagged so loadTrees() can swap this procedural cone for a GLB tree
+    g.userData.isTree = true;
+    g.userData.side = side;
+    g.userData.far = far;
     return g;
   }
 
@@ -829,104 +1016,209 @@ export default class ThreeSubwayScene {
     return g;
   }
 
-  // ── the runner ───────────────────────────────────────────────────────────
+  // ── the runner (cel-shaded cartoon character) ─────────────────────────────
+  // Isolated here on purpose: swapping in a rigged GLTF model later (Route B)
+  // only needs to replace this method + drive its AnimationMixer from update().
   buildCharacter() {
     const col = RUNNER_COLORS[this.avatarKey] ?? RUNNER_COLORS.alex;
-    const skinMat = new THREE.MeshStandardMaterial({ color: col.skin, roughness: 0.75 });
-    const topMat = new THREE.MeshStandardMaterial({ color: col.top, roughness: 0.6, metalness: 0.05 });
-    const pantMat = new THREE.MeshStandardMaterial({ color: col.pants, roughness: 0.8 });
-    const shoeMat = new THREE.MeshStandardMaterial({ color: col.shoe, roughness: 0.6 });
-    const hairMat = new THREE.MeshStandardMaterial({ color: col.hair, roughness: 0.9 });
+    this.toonRamp = toonRampTexture();
+    const toon = (color, extra = {}) => new THREE.MeshToonMaterial({ color, gradientMap: this.toonRamp, ...extra });
+    const basic = (color, extra = {}) => new THREE.MeshBasicMaterial({ color, ...extra });
+
+    const skinMat = toon(col.skin);
+    const topMat = toon(col.top); // hoodie
+    const topDark = toon(shade(col.top, 0.8));
+    const pantMat = toon(col.pants); // cargo pants
+    const shoeMat = toon(col.shoe);
+    const soleMat = toon(0xf2f4f7); // sneaker sole
+    const gloveMat = toon(0x2b2f38);
+    const packMat = toon(col.pack);
+    const packDark = toon(shade(col.pack, 0.75));
+    const beanieMat = toon(col.pack);
+    const white = basic(0xffffff);
+    const dark = basic(0x171a21);
+    const hairDark = toon(col.hair);
+
+    const mark = (m) => { m.userData.ol = true; return m; };
 
     const root = new THREE.Group(); // moved laterally + jumped; runs into -Z
     const body = new THREE.Group(); // bob + forward lean live here
     root.add(body);
 
-    // hips + torso
-    const hips = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.4), pantMat);
+    // ── torso / hips (rounded, cartoon proportions) ──
+    const hips = mark(new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.06, 4, 14), pantMat));
+    hips.scale.set(1.25, 1, 0.85);
     hips.position.y = 1.02;
     hips.castShadow = true;
     body.add(hips);
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.8, 0.42), topMat);
-    torso.position.y = 1.5;
+
+    const torso = mark(new THREE.Mesh(new THREE.CapsuleGeometry(0.27, 0.34, 5, 16), topMat));
+    torso.scale.set(1.12, 1, 0.8);
+    torso.position.y = 1.42;
     torso.castShadow = true;
     body.add(torso);
-    // hoodie collar
-    const collar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.4), topMat);
-    collar.position.y = 1.92;
-    body.add(collar);
+    // hood bunched behind the neck + hoodie pocket + drawstrings
+    const hood = mark(new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 12), topDark));
+    hood.scale.set(1, 0.7, 0.9);
+    hood.position.set(0, 1.74, 0.12);
+    body.add(hood);
+    const pocket = mark(new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.2, 0.12), topDark));
+    pocket.position.set(0, 1.2, -0.24);
+    body.add(pocket);
+    [-0.06, 0.06].forEach((x) => {
+      const str = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6), white);
+      str.position.set(x, 1.6, -0.24);
+      body.add(str);
+    });
 
-    // head + hair + cap brim
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.29, 18, 16), skinMat);
-    head.position.y = 2.22;
-    head.castShadow = true;
+    // ── head group (skull + face + beanie) — rotates for lane glances ──
+    const head = new THREE.Group();
+    head.position.y = 2.16;
     body.add(head);
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.31, 16, 14, 0, Math.PI * 2, 0, Math.PI * 0.62), hairMat);
-    hair.position.y = 2.28;
-    body.add(hair);
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.09, 0.28), topMat);
-    cap.position.set(0, 2.34, -0.24); // brim points forward (-Z)
-    body.add(cap);
     this.head = head;
 
-    // signature backpack
-    const pack = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, 0.62, 0.28),
-      new THREE.MeshStandardMaterial({ color: col.pack, roughness: 0.7 }),
-    );
-    pack.position.set(0, 1.55, 0.32);
+    const skull = mark(new THREE.Mesh(new THREE.SphereGeometry(0.34, 20, 18), skinMat));
+    skull.scale.set(1, 1.04, 0.98);
+    skull.castShadow = true;
+    head.add(skull);
+    [-1, 1].forEach((s) => {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), skinMat);
+      ear.scale.set(0.7, 1, 0.9);
+      ear.position.set(s * 0.33, -0.05, 0);
+      head.add(ear);
+    });
+    // face features (front is -Z)
+    [-1, 1].forEach((s) => {
+      const eyeW = new THREE.Mesh(new THREE.SphereGeometry(0.082, 12, 10), white);
+      eyeW.scale.set(1, 1.25, 0.55);
+      eyeW.position.set(s * 0.13, -0.01, -0.30);
+      head.add(eyeW);
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), dark);
+      pupil.position.set(s * 0.14, -0.02, -0.35);
+      head.add(pupil);
+      const hi = new THREE.Mesh(new THREE.SphereGeometry(0.015, 6, 6), white);
+      hi.position.set(s * 0.16, 0.01, -0.37);
+      head.add(hi);
+      const brow = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.035, 0.04), hairDark);
+      brow.position.set(s * 0.13, 0.10, -0.31);
+      brow.rotation.z = -s * 0.12;
+      head.add(brow);
+    });
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), skinMat);
+    nose.position.set(0, -0.12, -0.34);
+    head.add(nose);
+    const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.02, 8, 14, Math.PI), dark);
+    mouth.position.set(0, -0.16, -0.31);
+    mouth.rotation.z = Math.PI; // arc opens up → a smile
+    head.add(mouth);
+
+    // beanie (cap + folded brim + pom)
+    const cap = mark(new THREE.Mesh(new THREE.SphereGeometry(0.36, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.58), beanieMat));
+    cap.position.y = 0.05;
+    cap.castShadow = true;
+    head.add(cap);
+    const brim = mark(new THREE.Mesh(new THREE.TorusGeometry(0.345, 0.07, 10, 20), toon(shade(col.pack, 0.85))));
+    brim.rotation.x = Math.PI / 2;
+    brim.position.y = -0.12;
+    head.add(brim);
+    this.pom = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), toon(shade(col.pack, 1.25)));
+    this.pom.position.y = 0.44;
+    head.add(this.pom);
+
+    // neck
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.16, 10), skinMat);
+    neck.position.y = 1.9;
+    body.add(neck);
+
+    // ── signature backpack + shoulder straps ──
+    const pack = mark(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.24), packMat));
+    pack.position.set(0, 1.45, 0.3);
     pack.castShadow = true;
     body.add(pack);
+    const flap = mark(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.26), packDark));
+    flap.position.set(0, 1.7, 0.31);
+    body.add(flap);
+    [-1, 1].forEach((s) => {
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.66, 0.06), packDark);
+      strap.position.set(s * 0.22, 1.48, -0.16);
+      strap.rotation.x = -0.12;
+      body.add(strap);
+    });
 
-    // ── limbs on joint pivots so they swing about hip/shoulder ──
-    const mkLimb = (px, py, seg1, seg2, mat1, mat2, footMat) => {
+    // ── limbs on joint pivots (capsule segments + sneaker / glove ends) ──
+    const mkLimb = (px, py, up, lo, end) => {
       const pivot = new THREE.Group();
       pivot.position.set(px, py, 0);
-      const upper = new THREE.Mesh(new THREE.BoxGeometry(seg1.w, seg1.l, seg1.d), mat1);
-      upper.position.y = -seg1.l / 2;
-      upper.castShadow = true;
-      pivot.add(upper);
+      const uMesh = mark(new THREE.Mesh(new THREE.CapsuleGeometry(up.r, up.len - 2 * up.r, 4, 12), up.mat));
+      uMesh.position.y = -up.len / 2;
+      uMesh.castShadow = true;
+      pivot.add(uMesh);
       const lowerPivot = new THREE.Group();
-      lowerPivot.position.y = -seg1.l;
-      const lower = new THREE.Mesh(new THREE.BoxGeometry(seg2.w, seg2.l, seg2.d), mat2);
-      lower.position.y = -seg2.l / 2;
-      lower.castShadow = true;
-      lowerPivot.add(lower);
-      let foot = null;
-      if (footMat) {
-        foot = new THREE.Mesh(new THREE.BoxGeometry(seg2.w + 0.05, 0.16, 0.42), footMat);
-        foot.position.set(0, -seg2.l, -0.1);
-        lowerPivot.add(foot);
-      }
+      lowerPivot.position.y = -up.len;
+      const lMesh = mark(new THREE.Mesh(new THREE.CapsuleGeometry(lo.r, lo.len - 2 * lo.r, 4, 12), lo.mat));
+      lMesh.position.y = -lo.len / 2;
+      lMesh.castShadow = true;
+      lowerPivot.add(lMesh);
+      if (end) end(lowerPivot, -lo.len);
       pivot.add(lowerPivot);
       body.add(pivot);
       return { pivot, lowerPivot };
     };
 
-    // legs (hip → knee → foot)
-    this.legL = mkLimb(-0.18, 1.0, { w: 0.24, l: 0.55, d: 0.28 }, { w: 0.2, l: 0.5, d: 0.24 }, pantMat, pantMat, shoeMat);
-    this.legR = mkLimb(0.18, 1.0, { w: 0.24, l: 0.55, d: 0.28 }, { w: 0.2, l: 0.5, d: 0.24 }, pantMat, pantMat, shoeMat);
-    // arms (shoulder → elbow → hand)
-    this.armL = mkLimb(-0.42, 1.82, { w: 0.16, l: 0.42, d: 0.18 }, { w: 0.14, l: 0.4, d: 0.16 }, topMat, skinMat, null);
-    this.armR = mkLimb(0.42, 1.82, { w: 0.16, l: 0.42, d: 0.18 }, { w: 0.14, l: 0.4, d: 0.16 }, topMat, skinMat, null);
+    // chunky sneaker at the ankle
+    const foot = (parent, yb) => {
+      const g = new THREE.Group();
+      g.position.set(0, yb, 0);
+      const sole = mark(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.12, 0.54), soleMat));
+      sole.position.set(0, 0.02, -0.1);
+      sole.castShadow = true;
+      const upperShoe = mark(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.18, 0.34), shoeMat));
+      upperShoe.position.set(0, 0.16, 0.02);
+      const toe = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.13, 0.16), soleMat);
+      toe.position.set(0, 0.08, -0.28);
+      const lace = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.05, 0.02), white);
+      lace.position.set(0, 0.26, -0.02);
+      g.add(sole, upperShoe, toe, lace);
+      parent.add(g);
+    };
+    // mitten glove at the wrist
+    const hand = (parent, yb) => {
+      const glove = mark(new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10), gloveMat));
+      glove.scale.set(1, 1.15, 1.2);
+      glove.position.y = yb - 0.02;
+      glove.castShadow = true;
+      parent.add(glove);
+    };
 
-    // floating name tag
+    // legs (hip → knee → sneaker)
+    this.legL = mkLimb(-0.17, 1.0, { r: 0.15, len: 0.52, mat: pantMat }, { r: 0.12, len: 0.5, mat: pantMat }, foot);
+    this.legR = mkLimb(0.17, 1.0, { r: 0.15, len: 0.52, mat: pantMat }, { r: 0.12, len: 0.5, mat: pantMat }, foot);
+    // cargo pocket on each thigh
+    [-1, 1].forEach((s, i) => {
+      const leg = i === 0 ? this.legL : this.legR;
+      const cargo = mark(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.16), toon(shade(col.pants, 1.15))));
+      cargo.position.set(s * 0.15, -0.28, 0);
+      leg.pivot.add(cargo);
+    });
+    // arms (shoulder → elbow → glove), full hoodie sleeves
+    this.armL = mkLimb(-0.34, 1.66, { r: 0.1, len: 0.42, mat: topMat }, { r: 0.09, len: 0.4, mat: topMat }, hand);
+    this.armR = mkLimb(0.34, 1.66, { r: 0.1, len: 0.42, mat: topMat }, { r: 0.09, len: 0.4, mat: topMat }, hand);
+    // splay the arms slightly outward so they clear the torso when pumping
+    this.armL.pivot.rotation.z = 0.16;
+    this.armR.pivot.rotation.z = -0.16;
+
+    // give the whole character its cartoon outline
+    addToonOutlines(root);
+
+    // floating name tag (on the root, so it survives when the procedural body
+    // is hidden after the rigged model loads)
     const plate = new THREE.Mesh(
       new THREE.PlaneGeometry(1.3, 0.32),
       new THREE.MeshBasicMaterial({ map: namePlateTexture(this.avatarName), transparent: true }),
     );
     plate.position.set(0, 2.95, 0.1);
-    body.add(plate);
+    root.add(plate);
     this.namePlate = plate;
-
-    // cyan ground halo (nod to the car's under-glow)
-    const halo = new THREE.Mesh(
-      new THREE.CircleGeometry(0.75, 24),
-      new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.22, depthWrite: false }),
-    );
-    halo.rotation.x = -Math.PI / 2;
-    halo.position.y = 0.02;
-    root.add(halo);
 
     // dust puffs (wrong answer / hard landing)
     this.dustParts = [];
@@ -972,6 +1264,143 @@ export default class ThreeSubwayScene {
     root.position.set(this.laneX(this.currentLane), 0, 0);
     this.character = root;
     this.scene.add(root);
+  }
+
+  // Load the rigged character asynchronously. On success it replaces the
+  // procedural runner's visuals and animates via an AnimationMixer; on any
+  // failure the procedural runner simply stays (no visible breakage). Picks the
+  // loader by extension: .fbx (Mixamo, one run clip) or .glb (multi-clip).
+  loadRunnerModel() {
+    const onModel = (model, animations) => {
+      if (!this.running) return; // scene was destroyed mid-load
+      model.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+          o.frustumCulled = false; // skinned bounds change every frame
+        }
+      });
+      // normalise: ~2.4 units tall, feet on the ground, back to the camera (runs into -Z)
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      model.scale.setScalar(2.4 / (size.y || 1));
+      const box2 = new THREE.Box3().setFromObject(model);
+      model.position.y = -box2.min.y;
+      model.rotation.y = Math.PI;
+
+      const holder = new THREE.Group();
+      holder.add(model);
+      this.modelHolder = holder;
+      this.character.add(holder);
+
+      this.mixer = new THREE.AnimationMixer(model);
+      const clips = animations || [];
+      const byName = Object.fromEntries(clips.map((c) => [c.name, c]));
+      if (byName.Running && byName.Idle) {
+        // multi-clip model (.glb): drive a state machine (see update)
+        for (const clip of clips) {
+          const act = this.mixer.clipAction(clip);
+          if (clip.name === 'Jump') {
+            act.setLoop(THREE.LoopOnce, 1);
+            act.clampWhenFinished = true;
+          }
+          this.actions[clip.name] = act;
+        }
+        this.fadeToAction(this.locked ? 'Walking' : 'Running', 0);
+      } else if (clips.length) {
+        // single-clip model (Mixamo run): always play it, speed = game speed
+        this.singleAction = this.mixer.clipAction(clips[0]);
+        this.singleAction.play();
+      }
+
+      // swap: hide the procedural body (its outline/accessories go with it);
+      // name tag, halo, dust/spark/flame particles live on the root and stay.
+      this.body.visible = false;
+      this.useModel = true;
+    };
+
+    const onErr = (err) => {
+      // keep the procedural runner; just note why the upgrade didn't apply
+      console.warn('[subway] runner model failed to load, using procedural runner:', err?.message || err);
+    };
+
+    if (/\.fbx($|\?)/i.test(RUNNER_MODEL_URL)) {
+      new FBXLoader().load(RUNNER_MODEL_URL, (obj) => onModel(obj, obj.animations), undefined, onErr);
+    } else {
+      new GLTFLoader().load(RUNNER_MODEL_URL, (gltf) => onModel(gltf.scene, gltf.animations), undefined, onErr);
+    }
+  }
+
+  // Load the GLB tree packs and upgrade the procedural cone-trees to them. Each
+  // atlas node in the forest pack is a self-contained low-poly tree; the palm is
+  // one whole model. If a pack fails to load, those trees just stay procedural.
+  loadTrees() {
+    if (!this.treeMovers?.length) return;
+    const base = import.meta.env.BASE_URL;
+
+    // forest pack → all roadside trees (13 varieties)
+    new GLTFLoader().load(
+      `${base}models/low_poly_forest_tree_pack.glb`,
+      (gltf) => {
+        if (!this.running) return;
+        gltf.scene.updateWorldMatrix(true, true);
+        const protos = [];
+        gltf.scene.traverse((o) => {
+          if (!o.isMesh && /^Background_Tree_Atlas(\.\d+)?$/.test(o.name || '')) {
+            const p = normalizedProto(o, 6);
+            if (p) protos.push(p);
+          }
+        });
+        if (protos.length) this.swapTrees(this.treeMovers, protos);
+      },
+      undefined,
+      (e) => console.warn('[subway] tree pack failed, keeping procedural trees:', e?.message || e),
+    );
+
+    // coconut palms → sprinkle onto ~1 in 4 slots for variety
+    new GLTFLoader().load(
+      `${base}models/coconut_palm.glb`,
+      (gltf) => {
+        if (!this.running) return;
+        const p = normalizedProto(gltf.scene, 7.5);
+        if (!p) return;
+        this.swapTrees(this.treeMovers.filter((_, i) => i % 5 === 0), [p]);
+      },
+      undefined,
+      (e) => console.warn('[subway] palm failed:', e?.message || e),
+    );
+  }
+
+  // Replace each mover's current tree with a random clone of a prototype,
+  // keeping its side-x + current scroll-z. Old procedural cones are disposed;
+  // old GLB trees are only detached (their geometry is shared across clones).
+  swapTrees(movers, protos) {
+    movers.forEach((m) => {
+      const proto = protos[Math.floor(Math.random() * protos.length)];
+      const tree = proto.clone(true);
+      tree.rotation.y = Math.random() * Math.PI * 2;
+      tree.scale.multiplyScalar((0.8 + Math.random() * 0.6) * (m.obj.userData.far ? 1.35 : 1));
+      const holder = new THREE.Group();
+      holder.add(tree);
+      holder.position.copy(m.obj.position);
+      holder.userData.isTree = true;
+      holder.userData.glb = true;
+      holder.userData.side = m.obj.userData.side;
+      this.scene.remove(m.obj);
+      if (!m.obj.userData.glb) disposeObj(m.obj); // safe: only procedural cones
+      this.scene.add(holder);
+      m.obj = holder;
+    });
+  }
+
+  // Cross-fade the mixer to a named clip (Idle / Walking / Running / Jump).
+  fadeToAction(name, dur = 0.25) {
+    const next = this.actions[name];
+    if (!next || next === this.activeAction) return;
+    next.reset().fadeIn(dur).play();
+    if (this.activeAction) this.activeAction.fadeOut(dur);
+    this.activeAction = next;
   }
 
   // Build the visual for ONE equipped garage slot on the runner. Uses the SAME
@@ -1020,22 +1449,9 @@ export default class ThreeSubwayScene {
         break;
       }
       case 'BOOST': {
-        // a hover-board under the feet (Subway-Surfers signature)
-        const board = new THREE.Mesh(
-          new THREE.BoxGeometry(0.9, 0.12, 2.0),
-          new THREE.MeshStandardMaterial({ color: 0x0ea5e9, roughness: 0.3, metalness: 0.5, emissive: 0x0369a1, emissiveIntensity: 0.4 }),
-        );
-        board.position.set(0, 0.12, 0.1);
-        this.hoverBoard = board;
-        root.add(board);
-        const underglow = new THREE.Mesh(
-          new THREE.PlaneGeometry(1.1, 2.2),
-          new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.4, depthWrite: false }),
-        );
-        underglow.rotation.x = -Math.PI / 2;
-        underglow.position.set(0, 0.04, 0.1);
-        root.add(underglow);
-        this.flameParts.forEach((f, i) => f.position.set(i === 0 ? -0.3 : 0.3, 0.16, 1.0));
+        // Turbo Booster → speed flames that kick in on a sprint (no board/glow
+        // under the runner — it looked wrong under a running character).
+        this.flameParts.forEach((f, i) => f.position.set(i === 0 ? -0.22 : 0.22, 0.35, 0.7));
         this.flameScale = 1.7;
         break;
       }
@@ -1047,13 +1463,13 @@ export default class ThreeSubwayScene {
       }
       case 'HELMET': {
         const helmet = new THREE.Mesh(
-          new THREE.SphereGeometry(0.33, 16, 14, 0, Math.PI * 2, 0, Math.PI * 0.62),
+          new THREE.SphereGeometry(0.4, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.6),
           gold,
         );
-        helmet.position.y = 2.28;
+        helmet.position.y = 2.2;
         body.add(helmet);
-        const visor = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.1), neon);
-        visor.position.set(0, 2.24, -0.26);
+        const visor = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 0.1), neon);
+        visor.position.set(0, 2.12, -0.32);
         body.add(visor);
         break;
       }
@@ -1076,13 +1492,13 @@ export default class ThreeSubwayScene {
       }
       case 'BODY': {
         // neon outline strips down the outfit
-        [-0.36, 0.36].forEach((x) => {
+        [-0.32, 0.32].forEach((x) => {
           const strip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.8, 0.05), neon);
-          strip.position.set(x, 1.5, -0.22);
+          strip.position.set(x, 1.42, -0.22);
           body.add(strip);
         });
-        const belt = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.1, 0.44), neon);
-        belt.position.set(0, 1.12, 0);
+        const belt = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.1, 0.42), neon);
+        belt.position.set(0, 1.05, 0);
         body.add(belt);
         break;
       }
@@ -1134,25 +1550,39 @@ export default class ThreeSubwayScene {
       m.obj.position.z += dist;
       if (m.obj.position.z > 18) m.obj.position.z -= m.span;
     }
+    // moving sky (ambient — independent of run speed): the cloud dome turns
+    // slowly (wind) and the nearer puffs drift + wrap for parallax
+    if (this.cloudDome) this.cloudDome.rotation.y += dt * 0.006;
+    if (this.clouds) {
+      for (const c of this.clouds) {
+        c.sprite.position.x += c.speed * dt;
+        if (c.sprite.position.x > c.maxX) c.sprite.position.x = c.minX;
+      }
+    }
 
     // ── run cycle ──
-    // legs/arms driven by a phase that speeds up as the runner does
     const cadence = 8.5;
     this.runPhase += dt * cadence * (0.45 + this.speed * 1.15);
     const grounded = this.jumpY <= 0.001 && this.stumble <= 0;
-    const swing = grounded ? (0.5 + this.speed * 0.55) : 0.2;
-    const s = Math.sin(this.runPhase);
-    const s2 = Math.sin(this.runPhase + Math.PI);
-    // thighs swing opposite; arms swing opposite to their diagonal leg
-    this.legL.pivot.rotation.x = s * swing;
-    this.legR.pivot.rotation.x = s2 * swing;
-    // knees bend on the back-swing (never hyper-extend forward)
-    this.legL.lowerPivot.rotation.x = Math.max(0, s2) * 1.15;
-    this.legR.lowerPivot.rotation.x = Math.max(0, s) * 1.15;
-    this.armL.pivot.rotation.x = s2 * swing * 1.1;
-    this.armR.pivot.rotation.x = s * swing * 1.1;
-    this.armL.lowerPivot.rotation.x = -0.7 - Math.max(0, s) * 0.4;
-    this.armR.lowerPivot.rotation.x = -0.7 - Math.max(0, s2) * 0.4;
+    if (!this.useModel) {
+      // procedural runner: legs/arms driven by the phase
+      const swing = grounded ? (0.55 + this.speed * 0.6) : 0.2;
+      const s = Math.sin(this.runPhase);
+      const s2 = Math.sin(this.runPhase + Math.PI);
+      // thighs swing opposite; arms swing opposite to their diagonal leg
+      this.legL.pivot.rotation.x = s * swing;
+      this.legR.pivot.rotation.x = s2 * swing;
+      // knees bend on the back-swing (never hyper-extend forward)
+      this.legL.lowerPivot.rotation.x = Math.max(0, s2) * 1.25;
+      this.legR.lowerPivot.rotation.x = Math.max(0, s) * 1.25;
+      // arms swing with bent elbows (pumping)
+      this.armL.pivot.rotation.x = s2 * swing * 1.15;
+      this.armR.pivot.rotation.x = s * swing * 1.15;
+      this.armL.lowerPivot.rotation.x = -0.75 - Math.max(0, s) * 0.5;
+      this.armR.lowerPivot.rotation.x = -0.75 - Math.max(0, s2) * 0.5;
+      // beanie-pom bounce lags the stride for a bit of life
+      if (this.pom) this.pom.position.set(Math.sin(this.runPhase) * 0.03, 0.44 + Math.abs(Math.sin(this.runPhase)) * 0.02, Math.cos(this.runPhase) * 0.02);
+    }
 
     // jump physics (gravity arc)
     if (this.jumpY > 0 || this.jumpVel > 0) {
@@ -1177,19 +1607,37 @@ export default class ThreeSubwayScene {
       stumbleLean = Math.sin((1 - this.stumble) * Math.PI) * 0.5;
     }
 
-    // vertical bob (two per stride) + jump + tuck legs mid-air
-    const bob = grounded ? Math.abs(Math.sin(this.runPhase)) * 0.06 * (0.5 + this.speed) : 0;
-    this.body.position.y = bob;
-    if (!grounded && this.jumpY > 0) {
-      // tuck the legs while airborne
-      this.legL.lowerPivot.rotation.x = 1.1;
-      this.legR.lowerPivot.rotation.x = 1.1;
-      this.legL.pivot.rotation.x = -0.3;
-      this.legR.pivot.rotation.x = -0.3;
+    if (this.useModel && this.mixer) {
+      if (this.singleAction) {
+        // single-clip model (Mixamo run): always play, playback speed = game speed
+        // so the legs slow to a shuffle when stopped and pump on a sprint (tuned
+        // to the slower WORLD_SPEED so the feet don't slide on the ground)
+        this.singleAction.timeScale = this.stopped ? 0.15 : 0.45 + this.speed * 0.65;
+        this.mixer.update(dt);
+      } else {
+        // multi-clip model (.glb): pick a clip by state and cross-fade
+        const clip = this.stopped ? (this.pendingBoost ? 'Jump' : 'Idle') : this.locked ? 'Walking' : 'Running';
+        this.fadeToAction(clip);
+        this.mixer.update(dt * (clip === 'Running' ? 0.7 + this.speed : 1));
+      }
+      // subtle forward lean — the clip provides the stride + bob itself
+      if (this.modelHolder) {
+        this.modelHolder.rotation.x = THREE.MathUtils.clamp(-(0.02 + this.speed * 0.06) + stumbleLean, -0.6, 0.6);
+      }
+    } else {
+      // procedural runner: vertical bob (two per stride) + airborne leg tuck + lean
+      const bob = grounded ? Math.abs(Math.sin(this.runPhase)) * 0.06 * (0.5 + this.speed) : 0;
+      this.body.position.y = bob;
+      if (!grounded && this.jumpY > 0) {
+        // tuck the legs while airborne
+        this.legL.lowerPivot.rotation.x = 1.1;
+        this.legR.lowerPivot.rotation.x = 1.1;
+        this.legL.pivot.rotation.x = -0.3;
+        this.legR.pivot.rotation.x = -0.3;
+      }
+      // forward lean scales with speed; stumble adds a big trip lean
+      this.body.rotation.x = -(0.06 + this.speed * 0.12) + stumbleLean;
     }
-
-    // forward lean scales with speed; stumble adds a big trip lean
-    this.body.rotation.x = -(0.06 + this.speed * 0.12) + stumbleLean;
 
     // steer toward the target lane with a lateral lean (body roll)
     const targetX = this.laneX(this.currentLane);
@@ -1199,8 +1647,8 @@ export default class ThreeSubwayScene {
     this.character.rotation.y = THREE.MathUtils.clamp(dx * 0.12, -0.25, 0.25);
     this.character.position.y = this.jumpY;
 
-    // head glance toward the lane being entered
-    if (this.head) this.head.rotation.y = THREE.MathUtils.clamp(-dx * 0.12, -0.4, 0.4);
+    // head glance toward the lane being entered (procedural head only)
+    if (!this.useModel && this.head) this.head.rotation.y = THREE.MathUtils.clamp(-dx * 0.12, -0.4, 0.4);
 
     // ── effects ──
     // sprint flames (boost / accessories)
@@ -1254,8 +1702,8 @@ export default class ThreeSubwayScene {
     const shx = (Math.random() - 0.5) * this.shake * 0.5;
     const shy = (Math.random() - 0.5) * this.shake * 0.35;
     const camX = this.character.position.x * 0.55;
-    this.camera.position.set(camX, 4.9 + this.jumpY * 0.25, 8.4);
-    this.camera.lookAt(this.character.position.x * 0.8, 1.15 + this.jumpY * 0.4, -26);
+    this.camera.position.set(camX, 4.5 + this.jumpY * 0.25, 7.7);
+    this.camera.lookAt(this.character.position.x * 0.8, 1.4 + this.jumpY * 0.4, -26);
     const fovTarget = this.baseFov + this.speed * 6;
     this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, dt * 4);
     this.camera.updateProjectionMatrix();
@@ -1342,6 +1790,7 @@ export default class ThreeSubwayScene {
     cancelAnimationFrame(this.raf);
     this.ro?.disconnect();
     this.emitter?.off?.('setLane', this.onSetLane);
+    this.mixer?.stopAllAction();
     this.scene.traverse((o) => {
       o.geometry?.dispose?.();
       const mats = Array.isArray(o.material) ? o.material : [o.material];

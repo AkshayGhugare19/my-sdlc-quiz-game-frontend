@@ -1,0 +1,36 @@
+Character models for the Subway Surfer game (ThreeSubwayScene) — public/models/.
+
+ACTIVE runner (loaded by RUNNER_MODEL_URL in src/game/ThreeSubwayScene.js):
+  running.fbx
+    - A rigged, textured "cartoon boy" character with a Running animation,
+      exported from Adobe Mixamo (https://www.mixamo.com), FBX Binary, With Skin,
+      In Place. Loaded via Three's FBXLoader; the single clip is played always,
+      with playback speed driven by the game's run speed.
+    - License: Mixamo content is royalty-free for use in personal and commercial
+      projects under the Mixamo / Adobe licensing terms; obtained under the
+      project owner's own Mixamo (Adobe) account.
+    - To change the character: export a new Mixamo character (FBX Binary, With
+      Skin, In Place) and replace running.fbx — no code change needed.
+
+ALTERNATE runner (kept as a CC0 option; not loaded unless RUNNER_MODEL_URL points to it):
+  runner.glb
+    - "RobotExpressive" by Tomás Laulhé (Quaternius), CC0 1.0 (public domain);
+      morph targets / cleanup by Don McCurdy. Multi-clip (Idle/Walking/Running/
+      Jump). Point RUNNER_MODEL_URL at this .glb to use it instead.
+
+The loader picks GLTFLoader vs FBXLoader automatically by file extension. If the
+model fails to load for any reason, the fully-procedural cel-shaded runner
+(buildCharacter in ThreeSubwayScene.js) is used as an automatic fallback.
+
+SCENERY trees (loaded by loadTrees() in ThreeSubwayScene.js):
+  low_poly_forest_tree_pack.glb  — the "Background_Tree_Atlas" nodes are used as
+                                    the roadside trees (13 varieties).
+  coconut_palm.glb               — sprinkled onto ~1 in 4 tree slots.
+  Both are user-supplied GLB assets — verify their original source licenses
+  before shipping. If a pack fails to load, those trees stay procedural.
+  COMPRESSED: textures were downsized to 1024px and re-encoded to WebP with
+  gltf-transform (node hierarchy preserved, no geometry codec so no runtime
+  decoder needed). Forest 9.8MB→2.4MB, palm 12MB→1.7MB (~22MB → ~4.1MB).
+  Re-run if you replace them:
+    npx @gltf-transform/cli resize IN tmp.glb --width 1024 --height 1024
+    npx @gltf-transform/cli webp tmp.glb OUT --quality 85
