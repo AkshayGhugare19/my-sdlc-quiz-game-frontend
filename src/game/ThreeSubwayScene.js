@@ -36,7 +36,7 @@ const RUNNER_COLORS = {
 
 const LANE_W = 3.2; // world units between adjacent tracks
 const TRACK_LEN = 660; // how far the tracks stretch ahead
-const WORLD_SPEED = 22; // units/sec at full sprint (calmer pace)
+const WORLD_SPEED = 20; // units/sec at full sprint (calmer pace)
 const SPAN = 720; // recycle distance for scrolling scenery
 const GRAVITY = 30; // units/sec² for the jump arc (physics-inspired hop)
 
