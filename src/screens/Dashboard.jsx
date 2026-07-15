@@ -680,6 +680,16 @@ function CourseCard({ course: c, index, navigate }) {
         )
       )}
 
+      {/* Briefing — this course's attached learning path storyboard */}
+      {c.learningPathId && (
+        <button
+          onClick={() => navigate(`/storyboard/${c.learningPathId}?back=/dashboard`)}
+          className="mt-3 pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
+        >
+          📖 View briefing
+        </button>
+      )}
+
       {/* Missions */}
       {c.missions?.length > 0 && (
         <div className="mt-4">
@@ -694,7 +704,7 @@ function CourseCard({ course: c, index, navigate }) {
                   </span>
                   <StatusPill status={m.status} />
                   <button
-                    onClick={() => navigate(`/learn/${m.id}?missionId=${m.id}`)}
+                    onClick={() => navigate(`/learn/${m.id}?courseId=${c.id}`)}
                     className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
                   >
                     {MISSION_CTA[m.status] || '▶ Play'}
@@ -732,7 +742,7 @@ function CourseCard({ course: c, index, navigate }) {
                       </span>
                       <StatusPill status={m.status} />
                       <button
-                        onClick={() => navigate(`/learn/${m.id}?missionBundleId=${m.bundleId}`)}
+                        onClick={() => navigate(`/learn/${m.id}?missionBundleId=${m.bundleId}&courseId=${c.id}`)}
                         className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
                       >
                         {MISSION_CTA[m.status] || '▶ Play'}
@@ -752,7 +762,7 @@ function CourseCard({ course: c, index, navigate }) {
           <div className="text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-1">🏆 Tournaments</div>
           <div className="divide-y divide-slate-100">
             {c.tournaments.map((t) => (
-              <TournamentRow key={t.id} tournament={t} />
+              <TournamentRow key={t.id} tournament={t} courseLearningPathId={c.learningPathId} />
             ))}
           </div>
         </div>
@@ -832,6 +842,16 @@ function BundleCard({ bundle, index, navigate }) {
             {Math.round(p.completionPct ?? 0)}% complete · counts races started from this bundle only
           </div>
         </>
+      )}
+
+      {/* Briefing — this bundle's attached learning path storyboard */}
+      {bundle.pillar?.learningPathId && (
+        <button
+          onClick={() => navigate(`/storyboard/${bundle.pillar.learningPathId}?back=/dashboard`)}
+          className="mt-2 pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
+        >
+          📖 View briefing
+        </button>
       )}
 
       <div className="divide-y divide-slate-100 mt-2">
@@ -935,7 +955,7 @@ function placementClass(place) {
 }
 
 // One tournament row with its own join state (success / error notes inline).
-function TournamentRow({ tournament: t }) {
+function TournamentRow({ tournament: t, courseLearningPathId }) {
   const navigate = useNavigate();
   const setActiveTournament = useGameStore((s) => s.setActiveTournament);
   const [joined, setJoined] = useState(!!t.joined);
@@ -959,11 +979,19 @@ function TournamentRow({ tournament: t }) {
     }
   };
 
-  // Start THIS tournament's own race directly — its questions come from the
-  // tournament's configured pool, and only tournament races count.
+  // Start THIS tournament's own race — its questions come from the tournament's
+  // configured pool, and only tournament races count. If a learning path is
+  // attached, show its storyboard briefing first, then continue into the race.
   const raceNow = () => {
     setActiveTournament({ id: t.id, name: t.name, metric: t.metric });
-    navigate('/race/tournament');
+    // Entered through a course that has its own learning path? That course path
+    // overrides the tournament's own briefing (course > individual entity).
+    const briefingLpId = courseLearningPathId || t.learningPathId;
+    if (briefingLpId) {
+      navigate(`/storyboard/${briefingLpId}?next=${encodeURIComponent('/race/tournament')}&back=/dashboard`);
+    } else {
+      navigate('/race/tournament');
+    }
   };
 
   const dates = [t.startsAt, t.endsAt]

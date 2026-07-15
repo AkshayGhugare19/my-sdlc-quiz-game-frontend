@@ -56,7 +56,12 @@ export const api = {
   // Learning roadmaps: each course references missions/bundles/tournaments with
   // the player's own progress per item + course rollup + certificate.
   courses: () => http.get('/play/courses'),
-  missionContent: (missionId) => http.get(`/play/missions/${missionId}/content`),
+  // params carry the entry context ({ missionBundleId?, courseId? }) so the API
+  // resolves the right briefing: course path > bundle path > the mission's own.
+  missionContent: (missionId, params) => http.get(`/play/missions/${missionId}/content`, { params }),
+  // Storyboard "learning path" (its ordered points) attached to a mission bundle,
+  // course or tournament — shown as a pre-play briefing, just like a mission's.
+  learningPath: (id) => http.get(`/play/learning-paths/${id}`),
 
   // ── Gameplay session (server-authoritative) ──
   // Mission race: missionId set. Tournament race: tournamentId only — the

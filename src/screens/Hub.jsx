@@ -214,7 +214,17 @@ export default function Hub() {
   return (
     <div className="min-h-full p-5 md:p-8 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-4 mb-5 flex-wrap">
-        <BackButton to="/dashboard" />
+        <div className="flex items-center gap-3">
+          <BackButton to="/dashboard" />
+          {bundle?.learningPathId && (
+            <button
+              onClick={() => navigate(`/storyboard/${bundle.learningPathId}?back=/hub`)}
+              className="pill bg-royal/10 text-royal text-sm font-bold hover:bg-royal/20"
+            >
+              📖 Briefing
+            </button>
+          )}
+        </div>
         <div className="panel rounded-2xl px-5 py-2.5 flex items-center gap-4 text-royal font-semibold">
           <span>⭐ {player?.stars ?? 0}</span>
           <span>⚡ {player?.totalXp ?? 0} XP</span>

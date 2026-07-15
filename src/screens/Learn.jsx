@@ -1,46 +1,48 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { api } from '../services/api';
 import BackButton from '../components/BackButton';
+import StoryboardPanels from '../components/StoryboardPanels';
 
-// Screen 3 — Learn first. Renders the storyboard beats on a "monitor" panel; any
-// block flagged with config.interaction === 'CPR' shows the SPACE ×3 mini-beat.
+// Screen 3 — Learn first. The pre-race briefing is driven ONLY by an attached
+// learning path: its ordered points render as the storyboard. A mission with no
+// learning path has no briefing, so the player is sent straight to the race.
 export default function Learn() {
   const { missionId } = useParams();
   const [searchParams] = useSearchParams();
-  // Present when this mission was opened FROM its bundle — carried through to
-  // the race so bundle and standalone progress stay separate.
+  // Entry context. `missionBundleId` = opened FROM its bundle (kept through to the
+  // race so bundle vs standalone progress stay separate). `courseId` = opened from
+  // a course roadmap. Both decide which briefing shows (course > bundle > mission).
   const bundleId = searchParams.get('missionBundleId');
+  const courseId = searchParams.get('courseId');
   const navigate = useNavigate();
   const [content, setContent] = useState(null);
-  const [presses, setPresses] = useState(0);
+
+  const raceUrl = `/race/${missionId}${bundleId ? `?missionBundleId=${bundleId}` : `?missionId=${missionId}`}`;
 
   useEffect(() => {
-    api.missionContent(missionId).then(setContent);
-  }, [missionId]);
+    api
+      .missionContent(missionId, {
+        ...(bundleId ? { missionBundleId: bundleId } : {}),
+        ...(courseId ? { courseId } : {}),
+      })
+      .then(setContent);
+  }, [missionId, bundleId, courseId]);
 
-  const cprBlock = content?.contentBlocks?.find((b) => b.config?.interaction === 'CPR');
-  const cprTarget = cprBlock?.config?.presses ?? 3;
+  const learningPath = content?.learningPath;
+  const points = Array.isArray(learningPath?.points) ? learningPath.points : [];
+  const showPoints = points.length > 0;
 
-  const onKey = useCallback(
-    (e) => {
-      if (e.code === 'Space' && cprBlock) {
-        e.preventDefault();
-        setPresses((p) => Math.min(cprTarget, p + 1));
-      }
-    },
-    [cprBlock, cprTarget],
-  );
-
+  // No learning path attached → nothing to brief, so skip straight to the race.
+  // replace: this screen must not linger in history and bounce the player back.
   useEffect(() => {
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onKey]);
+    if (content && !showPoints) navigate(raceUrl, { replace: true });
+  }, [content, showPoints, raceUrl, navigate]);
 
   if (!content) return <div className="min-h-full grid place-items-center text-slate-500">Loading briefing…</div>;
+  if (!showPoints) return <div className="min-h-full grid place-items-center text-slate-500">Starting race…</div>;
 
-  const blocks = content.contentBlocks ?? [];
+  const heading = learningPath?.title || content.mission?.title || 'Briefing';
 
   return (
     <div className="min-h-full p-5 md:p-10 max-w-6xl mx-auto">
@@ -64,46 +66,16 @@ export default function Learn() {
             </div>
           </div>
 
-          <div className="text-cyan-300 text-xs font-bold tracking-widest mb-1">
-            {content.course?.category}
-          </div>
-          <h2 className="text-xl md:text-2xl font-extrabold text-white mb-5">{content.course?.title}</h2>
+          <div className="text-cyan-300 text-xs font-bold tracking-widest mb-1">Learning Path</div>
+          <h2 className="text-xl md:text-2xl font-extrabold text-white mb-5">{heading}</h2>
 
-          <div className="grid sm:grid-cols-3 gap-4 relative">
-            {blocks.map((b, i) => (
-              <motion.div
-                key={b.id}
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.08 }}
-                className="bg-white rounded-2xl p-5 shadow-lg"
-              >
-                <div className="w-8 h-8 rounded-full bg-royal text-white grid place-items-center font-extrabold mb-3">
-                  {i + 1}
-                </div>
-                <h3 className="font-extrabold text-royal leading-tight">{b.title}</h3>
-                <p className="text-slate-500 text-sm mt-2">{b.body}</p>
-
-                {b.config?.interaction === 'CPR' && (
-                  <div className="mt-4">
-                    <div className="text-xs font-semibold text-slate-400 mb-1">Press SPACE ×{cprTarget}</div>
-                    <div className="flex gap-1">
-                      {Array.from({ length: cprTarget }).map((_, k) => (
-                        <div key={k} className={`h-2 flex-1 rounded ${k < presses ? 'bg-neon' : 'bg-slate-200'}`} />
-                      ))}
-                    </div>
-                    {presses >= cprTarget && <div className="text-cyan-600 text-xs font-semibold mt-2">Great compressions! ✓</div>}
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </div>
+          <StoryboardPanels points={points} />
         </div>
       </div>
 
       {/* Coach + START */}
       <div className="flex items-end justify-between gap-4 mt-6 flex-wrap">
-        <button onClick={() => navigate(`/race/${missionId}${bundleId ? `?missionBundleId=${bundleId}` : `?missionId=${missionId}`}`)} className="btn-primary text-lg">
+        <button onClick={() => navigate(raceUrl)} className="btn-primary text-lg">
           START →
         </button>
         <div className="flex items-end gap-3">

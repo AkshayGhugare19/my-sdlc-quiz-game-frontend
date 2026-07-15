@@ -10,6 +10,7 @@ import Dashboard from './screens/Dashboard';
 import ChooseAvatar from './screens/ChooseAvatar';
 import Hub from './screens/Hub';
 import Learn from './screens/Learn';
+import Storyboard from './screens/Storyboard';
 import Race from './screens/Race';
 import Result from './screens/Result';
 import Champion from './screens/Champion';
@@ -39,6 +40,7 @@ export default function App() {
       <Route path="/avatar" element={<Protected><ChooseAvatar /></Protected>} />
       <Route path="/hub" element={<Protected><Hub /></Protected>} />
       <Route path="/learn/:missionId" element={<Protected><Learn /></Protected>} />
+      <Route path="/storyboard/:learningPathId" element={<Protected><Storyboard /></Protected>} />
       <Route path="/race/:missionId" element={<Protected><Race /></Protected>} />
       <Route path="/result" element={<Protected><Result /></Protected>} />
       <Route path="/champion" element={<Protected><Champion /></Protected>} />
