@@ -5,6 +5,7 @@ import ThreeGame, { createEmitter } from '../game/ThreeGame';
 import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
 import BackButton from '../components/BackButton';
+import GameChoiceModal from '../components/GameChoiceModal';
 import { accessoryIcon } from '../accessoryIcons';
 
 const LANE_COLORS = ['#ef4444', '#14b8a6', '#f59e0b', '#8b5cf6'];
@@ -50,6 +51,11 @@ export default function Race() {
   const startRace = useGameStore((s) => s.startRace);
   const refreshProfile = useGameStore((s) => s.refreshProfile);
   const player = useGameStore((s) => s.player);
+  // Which 3D game to play — chosen on the pre-race prompt below. Null until the
+  // player picks; `gameType` from the store is only the remembered default.
+  const gameType = useGameStore((s) => s.gameType);
+  const setGameType = useGameStore((s) => s.setGameType);
+  const [gameChoice, setGameChoice] = useState(null);
   // Every equipped accessory (one per slot) — all of them are shown on the kart.
   const equippedList = (player?.garage || [])
     .filter((g) => g.isEquipped)
@@ -107,6 +113,9 @@ export default function Race() {
   const isTournamentRace = missionId === 'tournament';
   const isQuickRace = missionId === 'quick';
   useEffect(() => {
+    // Wait for the game choice — the server session (and its mission clock)
+    // shouldn't start ticking while the player is still on the choice screen.
+    if (!gameChoice) return;
     startRace(isTournamentRace || isQuickRace ? null : missionId, avatar?.id, bundleId, { quick: isQuickRace })
       .then((s) => {
         sessionRef.current = s;
@@ -123,11 +132,12 @@ export default function Race() {
       // Send the reason back to the hub so the player knows what went wrong.
       // replace: the broken race must not stay in history (back would restart it).
       .catch((e) => navigate('/hub', { state: { error: e.message }, replace: true }));
-  }, [missionId, bundleId]); // eslint-disable-line
+  }, [missionId, bundleId, gameChoice]); // eslint-disable-line
 
-  // 2. Countdown 3-2-1-GO.
+  // 2. Countdown 3-2-1-GO — only after the player has chosen a game (the 3D
+  // scene isn't mounted until then, so there's nothing to start before that).
   useEffect(() => {
-    if (!boot) return;
+    if (!boot || !gameChoice) return;
     if (countdown < 0) {
       setRacing(true);
       sceneRef.current?.startRacing();
@@ -135,7 +145,7 @@ export default function Race() {
     }
     const t = setTimeout(() => setCountdown((c) => c - 1), 800);
     return () => clearTimeout(t);
-  }, [boot, countdown]);
+  }, [boot, gameChoice, countdown]);
 
   // 3. Mission timer.
   useEffect(() => {
@@ -251,8 +261,29 @@ export default function Race() {
     return () => window.removeEventListener('keydown', onKey);
   }, [racing, busy, selected, lanes, chooseLane, commit]);
 
+  // Pre-race prompt: choose Racing or Subway Surfer before anything boots. This
+  // gate sits ahead of every entry point (mission / course / bundle / quick /
+  // tournament / replay) because they all funnel through this one screen.
+  if (!gameChoice) {
+    return (
+      <GameChoiceModal
+        defaultGame={gameType}
+        onChoose={(g) => {
+          setGameChoice(g);
+          setGameType(g); // remember it as the default for next time
+        }}
+      />
+    );
+  }
+
   if (!boot) return <div className="min-h-full grid place-items-center">Warming up the grid…</div>;
 
+  const isSubway = gameChoice === 'subway';
+  const headerTitle = isSubway ? 'ANSWER BY RUNNING' : 'ANSWER BY RACING';
+  const headerSub = isSubway
+    ? 'Switch to the correct track to answer. Press the Spacebar or right-click twice to lock in.'
+    : 'Steer into the correct lane to answer. Press the Spacebar or right-click twice to stop.';
+  const steerHint = isSubway ? '← → switch track · Space / Enter to lock in' : '← → steer · Space / Enter to lock in';
   const total = hud?.questionTotal ?? 0;
   const idx = hud?.questionIndex ?? 0;
 
@@ -266,6 +297,7 @@ export default function Race() {
           avatarKey={avatar?.key}
           avatarName={avatar?.name}
           accessories={equippedList}
+          gameType={gameChoice}
           onLaneLayout={onLaneLayout}
           onReady={(scene) => (sceneRef.current = scene)}
         />
@@ -286,10 +318,12 @@ export default function Race() {
               }}
             />
             <div className="flex items-center gap-3 bg-white/90 rounded-2xl px-4 py-2 shadow-lg">
-              <div className="w-9 h-9 rounded-lg bg-royal text-white grid place-items-center font-extrabold shadow">5</div>
+              <div className="w-9 h-9 rounded-lg bg-royal text-white grid place-items-center font-extrabold shadow">
+                {isSubway ? '🚇' : '5'}
+              </div>
               <div>
-                <h1 className="text-lg md:text-2xl font-extrabold text-royal leading-tight">ANSWER BY RACING</h1>
-                <p className="text-slate-500 text-xs md:text-sm font-medium">Steer into the correct lane to answer. Press the Spacebar or right-click twice to stop.</p>
+                <h1 className="text-lg md:text-2xl font-extrabold text-royal leading-tight">{headerTitle}</h1>
+                <p className="text-slate-500 text-xs md:text-sm font-medium">{headerSub}</p>
               </div>
             </div>
             {boot.tournament && (
@@ -533,7 +567,7 @@ export default function Race() {
                 <div className="flex items-center justify-between gap-8"><span className="text-white/70">⚙️ Questions</span><b className="text-white">{idx}/{total}</b></div>
                 <div className="flex items-center justify-between gap-8"><span className="text-white/70">⭐ Knowledge Stars</span><b className="text-white">{hud?.starsEarned ?? 0}/{hud?.maxStars ?? 5}</b></div>
                 <div className="flex items-center justify-between gap-8"><span className="text-white/70">⏱ Mission Time</span><b className="text-neon">{fmt(timer)}</b></div>
-                <div className="pt-1 border-t border-white/15 text-white/60 text-xs">← → steer · Space / Enter to lock in</div>
+                <div className="pt-1 border-t border-white/15 text-white/60 text-xs">{steerHint}</div>
               </div>
             </div>
           </motion.div>

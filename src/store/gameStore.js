@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 import { api, setToken, getToken } from '../services/api';
 
+// Which 3D game the player races in ('racing' = sunset circuit car,
+// 'subway' = subway-surfer track runner). Persisted so the last pick is the
+// pre-highlighted default the next time the choice screen appears.
+const GAME_TYPE_KEY = 'rq_gametype';
+const getGameType = () => {
+  try {
+    return localStorage.getItem(GAME_TYPE_KEY) || 'racing';
+  } catch {
+    return 'racing';
+  }
+};
+
 // Drives the whole learning flow:
 // login → avatar → hub(pillars) → learn → race → result → hub → champion.
 export const useGameStore = create((set, get) => ({
@@ -12,6 +24,8 @@ export const useGameStore = create((set, get) => ({
   avatar: null,
   pillars: [],
   activeMission: null,
+  // The 3D game mode chosen before a race (see GameChoiceModal).
+  gameType: getGameType(),
   // Armed from the dashboard's "Race" button on a joined tournament; consumed
   // by the NEXT race start so exactly one race counts for the tournament.
   activeTournament: null,
@@ -85,6 +99,17 @@ export const useGameStore = create((set, get) => ({
 
   chooseMission(mission) {
     set({ activeMission: mission });
+  },
+
+  // Remember the chosen 3D game mode so it survives reloads and pre-selects
+  // itself the next time the player is asked which game to play.
+  setGameType(gameType) {
+    try {
+      localStorage.setItem(GAME_TYPE_KEY, gameType);
+    } catch {
+      /* ignore storage errors (private mode etc.) */
+    }
+    set({ gameType });
   },
 
   // Arm the next race as a tournament race (or pass null to disarm).

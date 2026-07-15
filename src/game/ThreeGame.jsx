@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
 import ThreeRaceScene from './ThreeRaceScene';
+import ThreeSubwayScene from './ThreeSubwayScene';
+
+// Both scenes implement the identical imperative contract (constructor shape,
+// onLaneLayout, setLane, startRacing/applyQuestion/playFeedback/resetSigns/
+// destroy), so the Race screen drives whichever one it's given interchangeably.
+const SCENES = { racing: ThreeRaceScene, subway: ThreeSubwayScene };
 
 // Minimal event emitter — replaces Phaser.Events.EventEmitter for the one
 // 'setLane' channel the Race screen uses, without pulling Phaser in.
@@ -21,11 +27,12 @@ export function createEmitter() {
 // Boots the three.js race scene into a div and hands the live scene back to
 // React via onReady — the same contract PhaserGame.jsx had, so the Race screen
 // can keep pushing questions / feedback imperatively.
-export default function ThreeGame({ emitter, laneCount, avatarKey, avatarName, accessories, onLaneLayout, onReady }) {
+export default function ThreeGame({ emitter, laneCount, avatarKey, avatarName, accessories, gameType, onLaneLayout, onReady }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
-    const scene = new ThreeRaceScene({
+    const SceneClass = SCENES[gameType] || ThreeRaceScene;
+    const scene = new SceneClass({
       container: containerRef.current,
       emitter,
       laneCount,
