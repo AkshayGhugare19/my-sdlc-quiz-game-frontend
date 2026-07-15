@@ -703,8 +703,12 @@ function CourseCard({ course: c, index, navigate }) {
                     ⭐ {m.starsEarned ?? 0}/{m.maxStars ?? 5}
                   </span>
                   <StatusPill status={m.status} />
+                  {/* Standalone course mission: avatar first, then race (no
+                      pillar) — keep the course context for the right briefing. */}
                   <button
-                    onClick={() => navigate(`/learn/${m.id}?courseId=${c.id}`)}
+                    onClick={() =>
+                      navigate(`/avatar?next=${encodeURIComponent(`/learn/${m.id}?courseId=${c.id}`)}`)
+                    }
                     className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
                   >
                     {MISSION_CTA[m.status] || '▶ Play'}
@@ -741,8 +745,16 @@ function CourseCard({ course: c, index, navigate }) {
                         ⭐ {m.starsEarned ?? 0}/{m.maxStars ?? 5}
                       </span>
                       <StatusPill status={m.status} />
+                      {/* Course bundle mission: avatar → pillar hub (scoped to
+                          this bundle, carrying the course), then race. */}
                       <button
-                        onClick={() => navigate(`/learn/${m.id}?missionBundleId=${m.bundleId}&courseId=${c.id}`)}
+                        onClick={() =>
+                          navigate(
+                            `/avatar?next=${encodeURIComponent(
+                              `/hub?bundleId=${m.bundleId}&courseId=${c.id}`,
+                            )}`,
+                          )
+                        }
                         className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
                       >
                         {MISSION_CTA[m.status] || '▶ Play'}
@@ -805,8 +817,12 @@ function MissionsPanel({ missions, navigate }) {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <StatusPill status={m.status} />
+              {/* Standalone mission: pick an avatar first, then race — no pillar
+                  step (pillars are only for mission bundles). */}
               <button
-                onClick={() => navigate(`/learn/${m.id}?missionId=${m.id}`)}
+                onClick={() =>
+                  navigate(`/avatar?next=${encodeURIComponent(`/learn/${m.id}?missionId=${m.id}`)}`)
+                }
                 className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
               >
                 {MISSION_CTA[m.status] || '▶ Play'}
@@ -868,8 +884,14 @@ function BundleCard({ bundle, index, navigate }) {
                   ⭐ {bp.starsEarned ?? 0}/{m.maxStars ?? 5}
                 </span>
                 <StatusPill status={bp.status} />
+                {/* Mission bundle: run the full quest flow — pick an avatar,
+                    then the pillar hub (scoped to this bundle), then race. */}
                 <button
-                  onClick={() => navigate(`/learn/${m.id}${m.bundleId ? `?missionBundleId=${m.bundleId}` : ''}`)}
+                  onClick={() =>
+                    navigate(
+                      `/avatar?next=${encodeURIComponent(`/hub${m.bundleId ? `?bundleId=${m.bundleId}` : ''}`)}`,
+                    )
+                  }
                   className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20"
                 >
                   {MISSION_CTA[bp.status] || '▶ Play'}

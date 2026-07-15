@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
@@ -12,6 +12,12 @@ export default function ChooseAvatar() {
   const [selected, setSelected] = useState(null);
   const chooseAvatar = useGameStore((s) => s.chooseAvatar);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Where to go after picking an avatar. Defaults to the pillar hub (the full
+  // "avatar → pillar" quest flow). A standalone mission launched from the
+  // Missions tab passes `?next=/learn/<id>?missionId=<id>` so it skips the pillar
+  // step; a bundle launched from the Mission Bundles tab passes `?next=/hub?...`.
+  const next = searchParams.get('next') || '/hub';
 
   useEffect(() => {
     api.avatars().then((list) => {
@@ -22,7 +28,7 @@ export default function ChooseAvatar() {
 
   const start = () => {
     chooseAvatar(selected);
-    navigate('/hub');
+    navigate(next);
   };
 
   return (

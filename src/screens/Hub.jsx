@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import Garage from '../components/Garage';
@@ -167,6 +167,13 @@ function PillarGate({ mission, pillar, index, onPlay }) {
 export default function Hub() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  // Which bundle's pillar screen to show. Set when launched from the Mission
+  // Bundles tab (`?bundleId=<id>`); the classic "Continue" flow omits it and
+  // falls back to the first pillar. `courseId` is carried when entered from a
+  // course roadmap so the mission keeps its course briefing.
+  const bundleId = searchParams.get('bundleId');
+  const courseId = searchParams.get('courseId');
   const { pillars, player } = useGameStore();
   const loadPillars = useGameStore((s) => s.loadPillars);
   const refreshProfile = useGameStore((s) => s.refreshProfile);
@@ -195,8 +202,10 @@ export default function Hub() {
     return () => clearTimeout(t);
   }, [notice]);
 
-  // Flatten missions across bundles into the "pillars" shown as arches.
-  const bundle = pillars[0];
+  // Flatten missions across bundles into the "pillars" shown as arches. When a
+  // specific bundle was requested (Mission Bundles tab) scope to it; otherwise
+  // show the first pillar.
+  const bundle = (bundleId && pillars.find((p) => String(p.id) === String(bundleId))) || pillars[0];
   const missions = bundle?.missions ?? [];
 
   const allComplete = useMemo(
@@ -208,7 +217,12 @@ export default function Hub() {
     chooseMission(mission);
     // Hub races run missions AS PART OF their pillar bundle — carry the bundle
     // context so the race feeds bundle progress, not standalone mission progress.
-    navigate(`/learn/${mission.id}${bundle?.id ? `?missionBundleId=${bundle.id}` : ''}`);
+    // Preserve the course context too when the player entered from a course.
+    const params = new URLSearchParams();
+    if (bundle?.id) params.set('missionBundleId', bundle.id);
+    if (courseId) params.set('courseId', courseId);
+    const qs = params.toString();
+    navigate(`/learn/${mission.id}${qs ? `?${qs}` : ''}`);
   };
 
   return (

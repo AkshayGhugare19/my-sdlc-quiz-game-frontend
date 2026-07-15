@@ -316,6 +316,11 @@ export default function Race() {
                   navigate(isTournamentRace || isQuickRace ? '/dashboard' : '/hub');
                 }
               }}
+              onHome={() => {
+                if (window.confirm('Leave for the dashboard? Your progress in this race will be lost.')) {
+                  navigate('/dashboard');
+                }
+              }}
             />
             <div className="flex items-center gap-3 bg-white/90 rounded-2xl px-4 py-2 shadow-lg">
               <div className="w-9 h-9 rounded-lg bg-royal text-white grid place-items-center font-extrabold shadow">
