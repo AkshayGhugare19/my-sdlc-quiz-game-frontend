@@ -3,14 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import BackButton from '../components/BackButton';
 import { api } from '../services/api';
+import { accessoryIcon } from '../accessoryIcons';
 
-const KIND_EMOJI = {
-  ACCESSORY: '🧰',
-  COUPON: '🎟️',
-  TITLE: '🏷️',
-  COMPANY_REWARD: '🎁',
-  BADGE: '🎖️',
-  CUSTOM: '✨',
+const RARITY_STYLE = {
+  common: 'bg-slate-100 text-slate-500',
+  rare: 'bg-sky-100 text-sky-600',
+  epic: 'bg-violet-100 text-violet-600',
+  legendary: 'bg-amber-100 text-amber-600',
 };
 
 function priceLine(item) {
@@ -20,8 +19,10 @@ function priceLine(item) {
   return parts.length ? parts.join(' · ') : 'Free';
 }
 
-// Reward Shop — spend coins/stars on accessories, coupons and company rewards.
-export default function Shop() {
+// Accessories Shop — purchasable kart accessories ONLY (SHOP acquisition type).
+// Reward accessories are earned by playing and never appear here. Purchases go
+// straight to the player's Accessories Garage.
+export default function AccessoriesShop() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +31,7 @@ export default function Shop() {
 
   const load = useCallback(async () => {
     try {
-      const d = await api.shop();
+      const d = await api.accessoriesShop();
       setData(d);
     } catch {
       setData(null);
@@ -48,18 +49,8 @@ export default function Shop() {
     setNotes((n) => ({ ...n, [item.id]: null }));
     try {
       const res = await api.buyShopItem(item.id);
-      // Wallet comes back on the order response — reflect it immediately.
       setData((d) => (d ? { ...d, wallet: res?.wallet ?? d.wallet } : d));
-      setNotes((n) => ({
-        ...n,
-        [item.id]: {
-          kind: 'ok',
-          text:
-            res?.status === 'FULFILLED'
-              ? '✓ Purchased — added to your garage!'
-              : '✓ Order placed — your admin will fulfil it.',
-        },
-      }));
+      setNotes((n) => ({ ...n, [item.id]: { kind: 'ok', text: '✓ Purchased — added to your Accessories Garage!' } }));
       await load(); // refresh owned/stock/canAfford flags
     } catch (e) {
       setNotes((n) => ({ ...n, [item.id]: { kind: 'err', text: e.message } }));
@@ -69,7 +60,7 @@ export default function Shop() {
   };
 
   if (loading) {
-    return <div className="min-h-full grid place-items-center text-slate-500">Loading the shop…</div>;
+    return <div className="min-h-full grid place-items-center text-slate-500">Loading the accessories shop…</div>;
   }
 
   const wallet = data?.wallet ?? {};
@@ -77,8 +68,11 @@ export default function Shop() {
 
   return (
     <div className="min-h-full p-5 md:p-10 max-w-6xl mx-auto">
-      <div className="mb-5">
-        <BackButton to="/dashboard" />
+      <div className="mb-5 flex items-center justify-between gap-3 flex-wrap">
+        <BackButton />
+        <button onClick={() => navigate('/garage')} className="pill bg-royal/10 text-royal text-xs font-bold hover:bg-royal/20">
+          🏠 My Accessories Garage →
+        </button>
       </div>
 
       {/* Header + wallet */}
@@ -89,11 +83,10 @@ export default function Shop() {
       >
         <div>
           <div className="text-royal text-xs font-bold tracking-widest">SDLC QUEST</div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-royal leading-tight">🛒 Reward Shop</h1>
-          <p className="text-slate-500 text-sm mt-1">Spend your hard-earned coins and stars on rewards.</p>
-          <button onClick={() => navigate('/accessories-shop')} className="text-royal text-xs font-bold mt-1.5 hover:underline">
-            Looking for kart gear? Open the Accessories Shop →
-          </button>
+          <h1 className="text-2xl md:text-3xl font-extrabold text-royal leading-tight">🧰 Accessories Shop</h1>
+          <p className="text-slate-500 text-sm mt-1">
+            Buy kart accessories with your coins and stars — they land straight in your garage.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="pill bg-amber-100 text-amber-700 font-extrabold">🪙 {wallet.coins ?? 0}</span>
@@ -110,9 +103,11 @@ export default function Shop() {
 
       {/* Items */}
       {!data ? (
-        <p className="text-slate-400 text-sm mt-8 text-center">The shop couldn&apos;t be loaded. Try again later.</p>
+        <p className="text-slate-400 text-sm mt-8 text-center">The accessories shop couldn&apos;t be loaded. Try again later.</p>
       ) : items.length === 0 ? (
-        <p className="text-slate-400 text-sm mt-8 text-center">Nothing on the shelves yet — check back soon!</p>
+        <p className="text-slate-400 text-sm mt-8 text-center">
+          No accessories for sale right now — reward accessories are won by racing!
+        </p>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-5">
           {items.map((item, i) => (
@@ -123,18 +118,23 @@ export default function Shop() {
               className="panel rounded-3xl p-5 flex flex-col"
             >
               <div className="flex items-start gap-3">
-                {item.imageUrl ? (
-                  <img src={item.imageUrl} alt="" className="w-14 h-14 rounded-2xl object-cover ring-1 ring-royal/10 shrink-0" />
-                ) : (
-                  <div className="w-14 h-14 rounded-2xl grid place-items-center text-3xl bg-royal/5 shrink-0">
-                    {KIND_EMOJI[item.kind] || '✨'}
-                  </div>
-                )}
+                <div className="w-14 h-14 rounded-2xl grid place-items-center text-3xl bg-royal/5 shrink-0">
+                  {accessoryIcon(item)}
+                </div>
                 <div className="min-w-0">
                   <div className="font-extrabold text-royal leading-snug">{item.name}</div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
-                    {String(item.kind || '').replace('_', ' ')}
-                  </span>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    {item.slot && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
+                        {item.slot}
+                      </span>
+                    )}
+                    {item.rarity && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${RARITY_STYLE[item.rarity] || RARITY_STYLE.common}`}>
+                        {item.rarity}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -143,9 +143,10 @@ export default function Shop() {
               <div className="flex items-center justify-between gap-2 mt-auto pt-4">
                 <div>
                   <div className="font-extrabold text-royal">{priceLine(item)}</div>
-                  {item.stock != null && !item.soldOut && (
-                    <div className="text-[11px] text-slate-400 font-semibold">{item.stock} left</div>
-                  )}
+                  <div className="text-[11px] text-slate-400 font-semibold">
+                    {item.stock != null && !item.soldOut && <span>{item.stock} left · </span>}
+                    Limit {item.purchaseLimit ?? 1} per player
+                  </div>
                 </div>
                 <BuyButton item={item} busy={busyId === item.id} onBuy={() => buy(item)} />
               </div>
@@ -153,6 +154,11 @@ export default function Shop() {
               {notes[item.id] && (
                 <div className={`text-xs mt-2 font-semibold ${notes[item.id].kind === 'ok' ? 'text-emerald-600' : 'text-red-500'}`}>
                   {notes[item.id].text}
+                  {notes[item.id].kind === 'ok' && (
+                    <button onClick={() => navigate('/garage')} className="underline ml-1.5">
+                      Open garage
+                    </button>
+                  )}
                 </div>
               )}
             </motion.div>
@@ -165,7 +171,7 @@ export default function Shop() {
 
 function BuyButton({ item, busy, onBuy }) {
   if (item.owned) {
-    return <span className="pill bg-emerald-100 text-emerald-700 text-xs font-bold">Owned ✓</span>;
+    return <span className="pill bg-emerald-100 text-emerald-700 text-xs font-bold">In your garage ✓</span>;
   }
   if (item.soldOut) {
     return (

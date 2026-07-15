@@ -32,6 +32,8 @@ export default function Champion() {
   }, [missions]);
 
   const serial = state?.bundle?.certificateSerial;
+  // Certificate title configured by the org admin (from /play/me); classic fallback.
+  const certificateName = player?.certificateName || 'SDLC Champion';
 
   const finalRows = [
     { icon: '⭐', label: 'Knowledge Stars', value: `${totals.stars}/${totals.maxStars}` },
@@ -47,7 +49,7 @@ export default function Champion() {
 
       <div className="flex items-center gap-3 mb-1">
         <div className="num-badge">8</div>
-        <h1 className="text-3xl md:text-4xl font-extrabold text-royal">SDLC CHAMPION!</h1>
+        <h1 className="text-3xl md:text-4xl font-extrabold text-royal">{certificateName.toUpperCase()}!</h1>
       </div>
       <p className="text-slate-500 font-medium mb-8 ml-14">We did it!</p>
 

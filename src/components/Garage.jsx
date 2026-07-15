@@ -218,8 +218,8 @@ function UnlockModal({ accessory: a, onClose }) {
 
         <div className="flex gap-2 mt-5">
           {unlock.shopItemId ? (
-            <button onClick={() => navigate('/shop')} className="btn-primary flex-1 !py-2.5 text-sm">
-              🛒 Open Reward Shop
+            <button onClick={() => navigate('/accessories-shop')} className="btn-primary flex-1 !py-2.5 text-sm">
+              🧰 Open Accessories Shop
             </button>
           ) : (
             <button onClick={onClose} className="btn-primary flex-1 !py-2.5 text-sm">

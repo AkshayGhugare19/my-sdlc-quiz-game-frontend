@@ -101,6 +101,8 @@ export default function Dashboard() {
   const tournaments = data?.tournaments ?? [];
   const rank = profile.rank ?? {};
   const rankColor = rank.color || '#0B3D91';
+  // Certificate title configured by the org admin; falls back to the classic label.
+  const certificateName = data?.certificateName || 'SDLC Champion';
 
   const started = (stats.missionsCompleted ?? 0) > 0;
 
@@ -204,6 +206,18 @@ export default function Dashboard() {
           >
             🛒 Reward Shop
           </button>
+          <button
+            onClick={() => navigate('/accessories-shop')}
+            className="pill bg-royal/10 text-royal font-extrabold px-6 hover:bg-royal/20 min-w-[160px]"
+          >
+            🧰 Accessories Shop
+          </button>
+          <button
+            onClick={() => navigate('/garage')}
+            className="pill bg-royal/10 text-royal font-extrabold px-6 hover:bg-royal/20 min-w-[160px]"
+          >
+            🏠 Garage
+          </button>
         </div>
       </motion.div>
 
@@ -244,7 +258,7 @@ export default function Dashboard() {
             <div className="grid lg:grid-cols-2 gap-5 items-start">
               <div className="space-y-5">
                 <PillarsPanel pillars={pillars} />
-                <ChampionCard pillars={pillars} navigate={navigate} />
+                <ChampionCard pillars={pillars} navigate={navigate} certificateName={certificateName} />
               </div>
               <div className="space-y-5">
                 <RecentPanel recent={recent} />
@@ -316,8 +330,11 @@ function RoadmapPanel({ data, garage, navigate }) {
   const allPillarsDone = pillars.length > 0 && pillarsDone === pillars.length;
   const unlockedAcc = garage?.unlockedCount ?? 0;
   const totalAcc = garage?.totalCount ?? 0;
-  const joinedTournament = tournaments.some((t) => t.joined);
-  const tournamentPoints = tournaments.some((t) => (t.myScore ?? 0) > 0);
+  // tournamentHistory covers finished tournaments too — participation stays
+  // done permanently, even after the tournament leaves the open list.
+  const history = data?.tournamentHistory ?? {};
+  const joinedTournament = !!history.joinedAny || tournaments.some((t) => t.joined);
+  const tournamentPoints = !!history.scoredAny || tournaments.some((t) => (t.myScore ?? 0) > 0);
 
   const steps = [
     { icon: '📝', title: 'Sign up', detail: 'Account created', done: true },
@@ -366,7 +383,7 @@ function RoadmapPanel({ data, garage, navigate }) {
       title: 'Complete the collection',
       detail: totalAcc ? `${unlockedAcc}/${totalAcc} accessories` : 'Own every accessory',
       done: totalAcc > 0 && unlockedAcc === totalAcc,
-      go: () => navigate('/shop'),
+      go: () => navigate('/accessories-shop'),
     },
   ];
 
@@ -377,7 +394,7 @@ function RoadmapPanel({ data, garage, navigate }) {
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show" className="panel rounded-3xl p-6">
       <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
-        <h2 className="text-lg font-extrabold text-royal">🗺️ Your Road to Champion</h2>
+        <h2 className="text-lg font-extrabold text-royal">🗺️ Your Road to {data?.certificateName || 'Champion'}</h2>
         <span className="text-sm font-extrabold text-royal">{pct}% complete</span>
       </div>
       <ProgressBar pct={pct} />
@@ -519,18 +536,21 @@ function GarageCard({ garage, navigate }) {
           </div>
         ))}
       </div>
-      <button
-        onClick={() => navigate('/hub')}
-        className="text-royal text-sm font-bold mt-3 hover:underline"
-      >
-        Open garage →
-      </button>
+      <div className="flex items-center gap-4 mt-3">
+        <button onClick={() => navigate('/garage')} className="text-royal text-sm font-bold hover:underline">
+          Open garage →
+        </button>
+        <button onClick={() => navigate('/accessories-shop')} className="text-royal text-sm font-bold hover:underline">
+          Accessories Shop →
+        </button>
+      </div>
     </motion.div>
   );
 }
 
-// Champion progress — gold card once every pillar is COMPLETED.
-function ChampionCard({ pillars, navigate }) {
+// Champion progress — gold card once every pillar is COMPLETED. The title comes
+// from the org's certificate template (certificateName), not a hardcoded label.
+function ChampionCard({ pillars, navigate, certificateName = 'SDLC Champion' }) {
   if (pillars.length === 0) return null;
   const completed = pillars.filter((p) => p.status === 'COMPLETED');
   const isChampion = completed.length === pillars.length;
@@ -544,7 +564,7 @@ function ChampionCard({ pillars, navigate }) {
         className="panel rounded-3xl p-6 text-center bg-gradient-to-b from-amber-50 to-white ring-1 ring-amber-300"
       >
         <div className="text-5xl mb-2">🏆</div>
-        <h2 className="text-lg font-extrabold text-royal">You are a SDLC Champion!</h2>
+        <h2 className="text-lg font-extrabold text-royal">You are a {certificateName}!</h2>
         <p className="text-slate-500 text-sm mt-1 mb-4">Every pillar completed — outstanding work.</p>
         <button onClick={() => navigate('/champion')} className="btn-primary w-full">
           View Champion screen →
@@ -556,13 +576,13 @@ function ChampionCard({ pillars, navigate }) {
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show" className="panel rounded-3xl p-6">
       <div className="flex items-center justify-between gap-2 mb-1">
-        <h2 className="text-lg font-extrabold text-royal">🏆 SDLC Champion</h2>
+        <h2 className="text-lg font-extrabold text-royal">🏆 {certificateName}</h2>
         <span className="text-sm font-extrabold text-royal whitespace-nowrap">
           {completed.length}/{pillars.length}
         </span>
       </div>
       <p className="text-slate-500 text-sm mb-3">
-        Complete all {pillars.length} pillars to become a SDLC Champion.
+        Complete all {pillars.length} pillars to become a {certificateName}.
       </p>
       <div className="space-y-1.5">
         {pillars.map((p) => (
@@ -969,6 +989,12 @@ function TournamentRow({ tournament: t }) {
           <PrizePool prizes={t.prizes} />
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* Course-roadmap requirement: permanent once joined + played. */}
+          {t.requirementMet && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+              ✓ COMPLETED
+            </span>
+          )}
           <StatusPill status={t.status} />
           {joined ? (
             <div className="flex items-center gap-2">

@@ -14,6 +14,8 @@ import Race from './screens/Race';
 import Result from './screens/Result';
 import Champion from './screens/Champion';
 import Shop from './screens/Shop';
+import AccessoriesShop from './screens/AccessoriesShop';
+import AccessoriesGarage from './screens/AccessoriesGarage';
 
 function Protected({ children }) {
   const token = useGameStore((s) => s.token);
@@ -41,6 +43,8 @@ export default function App() {
       <Route path="/result" element={<Protected><Result /></Protected>} />
       <Route path="/champion" element={<Protected><Champion /></Protected>} />
       <Route path="/shop" element={<Protected><Shop /></Protected>} />
+      <Route path="/accessories-shop" element={<Protected><AccessoriesShop /></Protected>} />
+      <Route path="/garage" element={<Protected><AccessoriesGarage /></Protected>} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

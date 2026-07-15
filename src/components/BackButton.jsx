@@ -1,15 +1,17 @@
 import { useNavigate } from 'react-router-dom';
 
 // Small pill back-control shown at the top-left of a flow screen.
-// Navigates to `to` if provided, otherwise steps back in history.
+// Steps back in real history when there is any (so "back" always returns to
+// the screen the player actually came from — hub, dashboard, garage, …);
+// `to` (or the dashboard) is only the fallback for deep links with no history.
 // `dark` styles it for the dark Phaser race canvas.
 export default function BackButton({ to, label = 'Back', onClick, dark = false }) {
   const navigate = useNavigate();
 
   const handle = () => {
     if (onClick) return onClick();
-    if (to) navigate(to);
-    else navigate(-1);
+    if (window.history.state?.idx > 0) return navigate(-1);
+    navigate(to || '/dashboard');
   };
 
   return (

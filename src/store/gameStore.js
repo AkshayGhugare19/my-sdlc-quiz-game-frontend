@@ -116,3 +116,11 @@ export const useGameStore = create((set, get) => ({
     set({ session: null });
   },
 }));
+
+// Session expiry: the API layer clears the stored token on 401 — mirror it in
+// the store so the Protected route guard immediately redirects to /login.
+if (typeof window !== 'undefined') {
+  window.addEventListener('rq:unauthorized', () => {
+    if (useGameStore.getState().token) useGameStore.getState().logout();
+  });
+}

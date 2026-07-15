@@ -117,7 +117,8 @@ export default function Race() {
         setGear(s.accessories || []);
       })
       // Send the reason back to the hub so the player knows what went wrong.
-      .catch((e) => navigate('/hub', { state: { error: e.message } }));
+      // replace: the broken race must not stay in history (back would restart it).
+      .catch((e) => navigate('/hub', { state: { error: e.message }, replace: true }));
   }, [missionId, bundleId]); // eslint-disable-line
 
   // 2. Countdown 3-2-1-GO.
@@ -155,12 +156,17 @@ export default function Race() {
       const result = await api.completeSession(sid);
       await refreshProfile();
       // Carry the race context so REPLAY keeps racing in the same flow.
-      navigate('/result', { state: { result, race: { bundleId, quick: isQuickRace } } });
+      // replace: pressing browser-back on the result screen must never remount
+      // the race route and silently start a brand-new scored session.
+      navigate('/result', {
+        state: { result, race: { bundleId, quick: isQuickRace, tournament: isTournamentRace } },
+        replace: true,
+      });
     } catch (e) {
       // Never leave the player stuck on a dead race — explain it back at the hub.
-      navigate('/hub', { state: { error: `Couldn't finish the race: ${e.message}` } });
+      navigate('/hub', { state: { error: `Couldn't finish the race: ${e.message}` }, replace: true });
     }
-  }, [navigate, refreshProfile, bundleId, isQuickRace]);
+  }, [navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
   const chooseLane = useCallback((lane) => {
     if (!racing || busy) return;
@@ -208,7 +214,10 @@ export default function Race() {
       setBusy(false);
       if (res.finished) {
         refreshProfile();
-        navigate('/result', { state: { result: res.result, race: { bundleId, quick: isQuickRace } } });
+        navigate('/result', {
+          state: { result: res.result, race: { bundleId, quick: isQuickRace, tournament: isTournamentRace } },
+          replace: true,
+        });
       } else {
         sceneRef.current?.applyQuestion();
         setPrompt(res.nextQuestion.prompt);
@@ -221,7 +230,7 @@ export default function Race() {
         setAccessory(null);
       }
     }, 1700);
-  }, [racing, busy, selected, boot, navigate, refreshProfile, bundleId, isQuickRace]);
+  }, [racing, busy, selected, boot, navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
   // Keyboard controls.
   useEffect(() => {

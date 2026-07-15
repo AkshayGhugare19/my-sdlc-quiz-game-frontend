@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useGameStore } from '../store/gameStore';
 import BackButton from '../components/BackButton';
 
 const RATING_COLOR = {
@@ -17,6 +18,7 @@ function mmss(sec = 0) {
 export default function Result() {
   const { state } = useLocation();
   const navigate = useNavigate();
+  const player = useGameStore((s) => s.player);
   const r = state?.result;
 
   if (!r) {
@@ -49,9 +51,13 @@ export default function Result() {
   const race = state?.race || {};
   const replayTo = race.quick
     ? '/race/quick'
-    : missionId
-      ? `/race/${missionId}${race.bundleId ? `?missionBundleId=${race.bundleId}` : `?missionId=${missionId}`}`
-      : null;
+    : race.tournament
+      ? '/dashboard' // tournament races are re-armed from the dashboard's Tournaments tab
+      : missionId
+        ? `/race/${missionId}${race.bundleId ? `?missionBundleId=${race.bundleId}` : `?missionId=${missionId}`}`
+        : null;
+  // Quick & tournament races are launched from the dashboard — exits return there.
+  const continueTo = race.quick || race.tournament ? '/dashboard' : '/hub';
 
   return (
     <div className="min-h-full p-5 md:p-10 max-w-4xl mx-auto">
@@ -96,15 +102,15 @@ export default function Result() {
           )}
 
           <div className="flex gap-3 mt-7">
-            <button onClick={() => navigate(replayTo ?? -1)} className="btn-ghost flex-1">
-              {race.quick ? 'RACE AGAIN' : 'REPLAY PILLAR'}
+            <button onClick={() => navigate(replayTo ?? continueTo)} className="btn-ghost flex-1">
+              {race.quick ? 'RACE AGAIN' : race.tournament ? '🏆 TOURNAMENTS' : 'REPLAY PILLAR'}
             </button>
             {bundleDone ? (
               <button onClick={() => navigate('/champion', { state: { bundle: r.bundle } })} className="btn-primary flex-1">
                 🏆 Champion
               </button>
             ) : (
-              <button onClick={() => navigate('/hub')} className="btn-primary flex-1">Continue →</button>
+              <button onClick={() => navigate(continueTo)} className="btn-primary flex-1">Continue →</button>
             )}
           </div>
         </motion.div>
@@ -123,7 +129,7 @@ export default function Result() {
           </div>
           <div className="text-royal font-extrabold text-lg mt-3">GREAT JOB!</div>
           <p className="text-slate-500 text-sm mt-1">
-            You&apos;re one step closer to becoming a SDLC  Champion!
+            You&apos;re one step closer to becoming a {player?.certificateName || 'SDLC Champion'}!
           </p>
         </motion.div>
       </div>

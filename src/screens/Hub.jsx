@@ -176,6 +176,14 @@ export default function Hub() {
   // Reason we were sent back here (e.g. a race that couldn't start).
   const [notice, setNotice] = useState(location.state?.error || null);
 
+  // Consume the error from history state so revisiting this entry (back/
+  // forward) doesn't resurface a stale notice.
+  useEffect(() => {
+    if (location.state?.error) {
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, []); // eslint-disable-line
+
   useEffect(() => {
     loadPillars();
     refreshProfile();
@@ -285,7 +293,7 @@ export default function Hub() {
           {/* goal callout */}
           <div className="absolute z-20 bottom-5 right-5 max-w-[250px] rounded-2xl bg-white/95 shadow-xl px-4 py-3 text-center">
             <p className="text-xs font-extrabold text-[#0f1b33] leading-snug">
-              🎯 Complete all three pillars to become a SDLC Champion!
+              🎯 Complete all three pillars to become a {player?.certificateName || 'SDLC Champion'}!
             </p>
             {allComplete && (
               <button onClick={() => navigate('/champion')} className="btn-primary w-full mt-2 !py-2 text-sm">

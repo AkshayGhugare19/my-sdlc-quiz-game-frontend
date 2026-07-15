@@ -21,7 +21,12 @@ http.interceptors.request.use((config) => {
 http.interceptors.response.use(
   (res) => res.data?.data ?? res.data,
   (err) => {
-    if (err.response?.status === 401) sessionStorage.removeItem('rq_token');
+    if (err.response?.status === 401) {
+      sessionStorage.removeItem('rq_token');
+      // Tell the store the session died so route guards send the player to
+      // /login instead of rendering broken screens with a stale token.
+      window.dispatchEvent(new Event('rq:unauthorized'));
+    }
     const message = err.response?.data?.message || err.message || 'Request failed';
     return Promise.reject(new Error(message));
   },
@@ -78,9 +83,13 @@ export const api = {
   // ── Team / reporting lines ──
   team: () => http.get('/play/team'),
 
-  // ── Reward shop (spend coins/stars; accessories fulfil instantly) ──
+  // ── Reward shop (coupons/titles/company rewards — no accessories) ──
   shop: () => http.get('/play/shop'),
   buyShopItem: (id) => http.post(`/play/shop/${id}/buy`),
+
+  // ── Accessories shop (purchasable kart accessories only; bought items land
+  //    straight in the Accessories Garage) ──
+  accessoriesShop: () => http.get('/play/accessories-shop'),
 };
 
 export function setToken(token) {
