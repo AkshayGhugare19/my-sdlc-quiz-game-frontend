@@ -50,7 +50,11 @@ export default function Race() {
   const startRace = useGameStore((s) => s.startRace);
   const refreshProfile = useGameStore((s) => s.refreshProfile);
   const player = useGameStore((s) => s.player);
-  const equipped = player?.garage?.find((g) => g.isEquipped)?.accessory || null;
+  // Every equipped accessory (one per slot) — all of them are shown on the kart.
+  const equippedList = (player?.garage || [])
+    .filter((g) => g.isEquipped)
+    .map((g) => g.accessory)
+    .filter(Boolean);
 
   const emitterRef = useRef(createEmitter());
   const sceneRef = useRef(null);
@@ -261,7 +265,7 @@ export default function Race() {
           laneCount={boot.mission.laneCount}
           avatarKey={avatar?.key}
           avatarName={avatar?.name}
-          accessory={equipped}
+          accessories={equippedList}
           onLaneLayout={onLaneLayout}
           onReady={(scene) => (sceneRef.current = scene)}
         />
@@ -464,11 +468,23 @@ export default function Race() {
 
       {/* Current accessory + this mission's winnable gear, pinned to the right */}
       <div className="absolute right-4 top-[38%] z-10 w-40 rounded-2xl bg-[#0f1b33]/90 border border-white/15 shadow-2xl p-3 text-center pointer-events-none hidden md:block">
-        <div className="text-[9px] tracking-[0.2em] font-bold text-white/70 mb-2">CURRENT ACCESSORY</div>
-        <div className="rounded-xl bg-black/40 h-20 grid place-items-center text-4xl">
-          {equipped ? accessoryIcon(equipped) : <span className="text-white/30 text-sm font-semibold">None yet</span>}
+        <div className="text-[9px] tracking-[0.2em] font-bold text-white/70 mb-2">
+          {equippedList.length > 1 ? 'EQUIPPED GEAR' : 'CURRENT ACCESSORY'}
         </div>
-        {equipped && <div className="text-white text-xs font-bold mt-2 truncate">{equipped.name}</div>}
+        <div className="rounded-xl bg-black/40 min-h-[5rem] grid place-items-center p-2">
+          {equippedList.length > 0 ? (
+            <div className="flex flex-wrap justify-center gap-2">
+              {equippedList.map((a) => (
+                <div key={a.id ?? a.key ?? a.slot} className="flex flex-col items-center w-[3.4rem]">
+                  <span className="text-3xl leading-none drop-shadow">{accessoryIcon(a)}</span>
+                  <span className="text-white/80 text-[8px] font-bold mt-0.5 truncate w-full">{a.name}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <span className="text-white/30 text-sm font-semibold">None yet</span>
+          )}
+        </div>
         {gear.length > 0 && (
           <div className="flex justify-center gap-1.5 mt-2.5">
             {gear.map((g) => (

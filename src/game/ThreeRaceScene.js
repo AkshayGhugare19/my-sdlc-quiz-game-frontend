@@ -208,13 +208,13 @@ function namePlateTexture(name) {
 
 // ── scene ────────────────────────────────────────────────────────────────────
 export default class ThreeRaceScene {
-  constructor({ container, emitter, laneCount = 3, avatarKey = 'alex', avatarName = 'ALEX', accessorySlot = null }) {
+  constructor({ container, emitter, laneCount = 3, avatarKey = 'alex', avatarName = 'ALEX', accessorySlots = [] }) {
     this.container = container;
     this.emitter = emitter;
     this.laneCount = laneCount;
     this.avatarKey = avatarKey;
     this.avatarName = (avatarName || 'ALEX').toUpperCase().slice(0, 10);
-    this.accessorySlot = accessorySlot; // equipped garage accessory → visual on the car
+    this.accessorySlots = accessorySlots; // every equipped garage slot → its own visual on the car
     this.flameScale = 1; // EXHAUST/BOOST accessories enlarge the flames
 
     this.locked = true; // countdown / feedback pauses full speed
@@ -620,16 +620,15 @@ export default class ThreeRaceScene {
       this.smokeParts.push(puff);
     }
 
-    this.buildAccessory(car);
+    this.buildAccessories(car);
 
     car.position.set(this.laneX(this.currentLane), 0, 0);
     this.car = car;
     this.scene.add(car);
   }
 
-  // Visual for the accessory equipped in the garage — one build per slot type.
-  buildAccessory(car) {
-    const slot = this.accessorySlot;
+  // Build the visual for ONE equipped garage slot (BOOST / WINGS / HELMET …).
+  buildAccessory(car, slot) {
     if (!slot) return;
     const neon = new THREE.MeshBasicMaterial({
       color: 0x67e8f9, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false,
@@ -741,6 +740,13 @@ export default class ThreeRaceScene {
         break;
       }
     }
+  }
+
+  // The car can carry one accessory per slot, so render EVERY equipped slot's
+  // visual — a player who equips Turbo Booster + Neon Wings + a Champion Helmet
+  // then sees all three effects at once, not just the first one.
+  buildAccessories(car) {
+    for (const slot of this.accessorySlots || []) this.buildAccessory(car, slot);
   }
 
   laneX(i) {
