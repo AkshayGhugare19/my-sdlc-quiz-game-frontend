@@ -23,14 +23,26 @@ model fails to load for any reason, the fully-procedural cel-shaded runner
 (buildCharacter in ThreeSubwayScene.js) is used as an automatic fallback.
 
 SCENERY trees (loaded by loadTrees() in ThreeSubwayScene.js):
-  low_poly_forest_tree_pack.glb  — the "Background_Tree_Atlas" nodes are used as
-                                    the roadside trees (13 varieties).
-  coconut_palm.glb               — sprinkled onto ~1 in 4 tree slots.
-  Both are user-supplied GLB assets — verify their original source licenses
-  before shipping. If a pack fails to load, those trees stay procedural.
-  COMPRESSED: textures were downsized to 1024px and re-encoded to WebP with
-  gltf-transform (node hierarchy preserved, no geometry codec so no runtime
-  decoder needed). Forest 9.8MB→2.4MB, palm 12MB→1.7MB (~22MB → ~4.1MB).
-  Re-run if you replace them:
+  All slots are STATIC GLB trees drawn from one weighted pool (via swapTrees()).
+  None is pre-animated — a cheap procedural wind-sway (rotation.z on each tree's
+  base, own phase/speed) is applied in update() so the roadside still feels alive.
+    real_tree_model1.glb — maple; lightest geom (~16k verts), weighted 3× (most common).
+    real_tree_model2.glb — euro beech; moderate geom (~29k verts), weighted 2×.
+    coconut_palm.glb     — palm; light, weighted 2×.
+    mango_tree.glb       — mango; heavy geom (~100k verts), weighted 1× (rare accent).
+  All are user-supplied GLB assets (Sketchfab-authored) — verify their original
+  source licenses before shipping. If any fails to load, those slots stay
+  procedural cones. (Removed earlier: stylized_tree.glb, tree_animate.glb.)
+
+  COMPRESSED with gltf-transform (all decoder-free at runtime: EXT_texture_webp +
+  KHR_mesh_quantization, both natively supported by three.js GLTFLoader):
+    coconut_palm       12MB  → 1.7MB  (resize 1024 + webp)
+    mango_tree         11MB  → 3.2MB  (simplify --ratio 0.28 + webp + quantize; leaf cards resist simplify)
+    real_tree_model1  3.3MB  → 0.9MB  (webp + quantize)
+    real_tree_model2  5.7MB  → 2.1MB  (webp + quantize)
+  Recipes (textures-only):
     npx @gltf-transform/cli resize IN tmp.glb --width 1024 --height 1024
     npx @gltf-transform/cli webp tmp.glb OUT --quality 85
+  For high-poly geometry add:  simplify --ratio 0.05 --error 0.05  then  quantize
+  If a model uses KHR_materials_pbrSpecularGlossiness (dropped by modern three),
+  convert first:  npx @gltf-transform/cli metalrough IN OUT

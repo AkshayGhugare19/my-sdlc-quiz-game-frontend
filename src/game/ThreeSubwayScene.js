@@ -36,7 +36,7 @@ const RUNNER_COLORS = {
 
 const LANE_W = 3.2; // world units between adjacent tracks
 const TRACK_LEN = 660; // how far the tracks stretch ahead
-const WORLD_SPEED = 20; // units/sec at full sprint (calmer pace)
+const WORLD_SPEED = 18; // units/sec at full sprint (calmer pace)
 const SPAN = 720; // recycle distance for scrolling scenery
 const GRAVITY = 30; // units/sec² for the jump arc (physics-inspired hop)
 
@@ -215,37 +215,61 @@ function cloudSprite() {
   return s;
 }
 
-// Full-sky cloud layer painted on a big rotating dome. Soft, overlapping puffs
-// concentrated in the upper band (transparent toward the horizon), tiled
-// horizontally so it wraps seamlessly as the dome slowly turns (= wind).
+// Full-sky cloud layer painted on a big rotating dome. Uses fractal (fBm) value
+// noise soft-thresholded into fluffy cumulus shapes — far more realistic than
+// flat blobs — concentrated in the upper band and tiled horizontally so it wraps
+// seamlessly as the dome slowly turns (= wind).
 function cloudLayerTexture() {
-  return canvasTexture(1024, 512, (ctx, w, h) => {
-    ctx.clearRect(0, 0, w, h);
-    const puff = (x, y, r, a) => {
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, `rgba(255,255,255,${a})`);
-      g.addColorStop(0.55, `rgba(255,255,255,${a * 0.5})`);
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    for (let i = 0; i < 34; i++) {
-      const cx = Math.random() * w;
-      const cy = h * (0.08 + Math.random() * 0.46); // upper band of the canvas
-      const baseR = 44 + Math.random() * 76;
-      const alpha = 0.55 + Math.random() * 0.4;
-      for (let k = 0, n = 3 + ((Math.random() * 4) | 0); k < n; k++) {
-        const dx = (Math.random() - 0.5) * baseR * 2.2;
-        const dy = (Math.random() - 0.5) * baseR * 0.7;
-        const r = baseR * (0.6 + Math.random() * 0.7);
-        puff(cx + dx, cy + dy, r, alpha);
-        if (cx + dx - r < 0) puff(cx + dx + w, cy + dy, r, alpha); // wrap for seamless tiling
-        if (cx + dx + r > w) puff(cx + dx - w, cy + dy, r, alpha);
+  const W = 1024, H = 512;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(W, H);
+
+  // periodic value-noise grid (wraps in X for a seamless dome)
+  const GW = 24, GH = 12;
+  const grid = new Float32Array(GW * GH);
+  for (let i = 0; i < grid.length; i++) grid[i] = Math.random();
+  const at = (x, y) => grid[(((y % GH) + GH) % GH) * GW + (((x % GW) + GW) % GW)];
+  const sm = (t) => t * t * (3 - 2 * t);
+  const vnoise = (u, v) => {
+    const x0 = Math.floor(u), y0 = Math.floor(v);
+    const fx = sm(u - x0), fy = sm(v - y0);
+    const a = at(x0, y0), b = at(x0 + 1, y0), cc = at(x0, y0 + 1), d = at(x0 + 1, y0 + 1);
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (cc * (1 - fx) + d * fx) * fy;
+  };
+  const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+  for (let y = 0; y < H; y++) {
+    const vy = y / H;
+    // clouds fill a broad band from just above the horizon up toward the zenith
+    const mask = clamp01((0.62 - vy) * 4.2) * clamp01(vy * 12);
+    for (let x = 0; x < W; x++) {
+      let n = 0, amp = 0.5, freq = 1; // 4-octave fBm, periodic in X
+      for (let o = 0; o < 4; o++) {
+        n += amp * vnoise((x / W) * GW * freq, (y / H) * GH * freq);
+        amp *= 0.5;
+        freq *= 2;
       }
+      let a = clamp01((n - 0.42) / 0.36); // soft threshold → billowy cloud mass
+      a = a * a * (3 - 2 * a);
+      const alpha = a * mask;
+      const idx = (y * W + x) * 4;
+      const shade = 208 + 47 * a; // bright cores, slightly grey thin edges
+      img.data[idx] = shade;
+      img.data[idx + 1] = shade;
+      img.data[idx + 2] = Math.min(255, shade + 6);
+      img.data[idx + 3] = Math.round(alpha * 255);
     }
-  });
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.anisotropy = 4;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 // Player name tag that floats over the runner (mirrors the car's rear-wing plate).
@@ -392,6 +416,7 @@ export default class ThreeSubwayScene {
     this.actions = {};
     this.activeAction = null;
     this.singleAction = null; // set when the model has just one clip (Mixamo run)
+    this.treeMixers = []; // AnimationMixers for the swaying (morph-animated) trees
 
     this.bedW = laneCount * LANE_W + 2.4;
 
@@ -1339,37 +1364,36 @@ export default class ThreeSubwayScene {
     if (!this.treeMovers?.length) return;
     const base = import.meta.env.BASE_URL;
 
-    // forest pack → all roadside trees (13 varieties)
-    new GLTFLoader().load(
-      `${base}models/low_poly_forest_tree_pack.glb`,
-      (gltf) => {
-        if (!this.running) return;
-        gltf.scene.updateWorldMatrix(true, true);
-        const protos = [];
-        gltf.scene.traverse((o) => {
-          if (!o.isMesh && /^Background_Tree_Atlas(\.\d+)?$/.test(o.name || '')) {
-            const p = normalizedProto(o, 6);
-            if (p) protos.push(p);
-          }
-        });
-        if (protos.length) this.swapTrees(this.treeMovers, protos);
-      },
-      undefined,
-      (e) => console.warn('[subway] tree pack failed, keeping procedural trees:', e?.message || e),
-    );
+    // Every slot is a static GLB tree, picked from a weighted pool so the
+    // lighter models appear most often and the heavy mango is a rare accent.
+    // Each swapped tree gets a wind-sway phase (see update()) so the roadside
+    // still feels alive even though none of these models is pre-animated.
+    const staticMovers = this.treeMovers;
+    this.staticProtos = [];
+    const applyStatic = () => { if (this.staticProtos.length) this.swapTrees(staticMovers, this.staticProtos); };
 
-    // coconut palms → sprinkle onto ~1 in 4 slots for variety
-    new GLTFLoader().load(
-      `${base}models/coconut_palm.glb`,
-      (gltf) => {
-        if (!this.running) return;
-        const p = normalizedProto(gltf.scene, 7.5);
-        if (!p) return;
-        this.swapTrees(this.treeMovers.filter((_, i) => i % 5 === 0), [p]);
-      },
-      undefined,
-      (e) => console.warn('[subway] palm failed:', e?.message || e),
-    );
+    // Load a static tree and add it to the pool `weight` times (heavier trees
+    // get a lower weight so they appear less often). Re-swaps as each arrives.
+    const loadStatic = (file, targetH, weight) =>
+      new GLTFLoader().load(
+        `${base}models/${file}`,
+        (gltf) => {
+          if (!this.running) return;
+          const p = normalizedProto(gltf.scene, targetH);
+          if (!p) return;
+          for (let k = 0; k < weight; k++) this.staticProtos.push(p);
+          applyStatic();
+        },
+        undefined,
+        (e) => console.warn(`[subway] ${file} failed:`, e?.message || e),
+      );
+
+    // Weighted roadside mix: the two lighter "real" trees dominate; coconut
+    // palm adds variety; the heavy mango (≈100k verts) shows up only rarely.
+    loadStatic('real_tree_model1.glb', 8, 3);   // maple  — lightest (~16k verts)
+    loadStatic('real_tree_model2.glb', 9, 2);   // beech  — moderate (~29k verts)
+    loadStatic('coconut_palm.glb', 7.5, 2);     // palm   — light
+    loadStatic('mango_tree.glb', 7, 1);         // mango  — heavy accent, rare
   }
 
   // Replace each mover's current tree with a random clone of a prototype,
@@ -1387,8 +1411,56 @@ export default class ThreeSubwayScene {
       holder.userData.isTree = true;
       holder.userData.glb = true;
       holder.userData.side = m.obj.userData.side;
+      // ambient wind-sway params (used in update()): each tree tilts a little
+      // from its base on its own phase/speed so they don't sway in unison.
+      holder.userData.swayPhase = Math.random() * Math.PI * 2;
+      holder.userData.swayAmp = 0.018 + Math.random() * 0.022; // ~1–2.3°
+      holder.userData.swaySpeed = 0.5 + Math.random() * 0.5;
       this.scene.remove(m.obj);
       if (!m.obj.userData.glb) disposeObj(m.obj); // safe: only procedural cones
+      this.scene.add(holder);
+      m.obj = holder;
+    });
+  }
+
+  // Replace a few tree slots with wind-swaying (morph-animated) trees. Each gets
+  // its own AnimationMixer (advanced in update()), started at a random phase so
+  // they don't sway in unison.
+  swapAnimatedTrees(movers, gltf, targetH) {
+    const clip = gltf.animations[0];
+    movers.forEach((m) => {
+      const model = gltf.scene.clone(true); // preserves morph targets + node names
+      model.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.frustumCulled = false; // morph bounds shift each frame
+        }
+      });
+      const holder = new THREE.Group();
+      holder.add(model);
+      // normalise ~targetH tall, centred, feet at y=0
+      let box = new THREE.Box3().setFromObject(holder);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      if (size.y > 0.01) model.scale.multiplyScalar(targetH / size.y);
+      box = new THREE.Box3().setFromObject(holder);
+      const c = new THREE.Vector3();
+      box.getCenter(c);
+      model.position.x -= c.x;
+      model.position.z -= c.z;
+      model.position.y -= box.min.y;
+      model.rotation.y = Math.random() * Math.PI * 2;
+      holder.position.copy(m.obj.position);
+      holder.userData.isTree = true;
+      holder.userData.glb = true;
+      holder.userData.side = m.obj.userData.side;
+      const mixer = new THREE.AnimationMixer(model);
+      const act = mixer.clipAction(clip);
+      act.play();
+      act.time = Math.random() * (clip.duration || 1); // desync
+      this.treeMixers.push(mixer);
+      this.scene.remove(m.obj);
+      if (!m.obj.userData.glb) disposeObj(m.obj);
       this.scene.add(holder);
       m.obj = holder;
     });
@@ -1550,6 +1622,15 @@ export default class ThreeSubwayScene {
       m.obj.position.z += dist;
       if (m.obj.position.z > 18) m.obj.position.z -= m.span;
     }
+    // ambient wind: gently tilt each GLB tree from its base on its own phase.
+    // (treeMixers stays for any pre-animated GLB that gets re-added later.)
+    this.windT = (this.windT || 0) + dt;
+    for (const m of this.treeMovers) {
+      const u = m.obj.userData;
+      if (u.swayPhase == null) continue; // procedural-cone fallbacks don't sway
+      m.obj.rotation.z = Math.sin(this.windT * u.swaySpeed + u.swayPhase) * u.swayAmp;
+    }
+    for (const mx of this.treeMixers) mx.update(dt);
     // moving sky (ambient — independent of run speed): the cloud dome turns
     // slowly (wind) and the nearer puffs drift + wrap for parallax
     if (this.cloudDome) this.cloudDome.rotation.y += dt * 0.006;
@@ -1612,7 +1693,7 @@ export default class ThreeSubwayScene {
         // single-clip model (Mixamo run): always play, playback speed = game speed
         // so the legs slow to a shuffle when stopped and pump on a sprint (tuned
         // to the slower WORLD_SPEED so the feet don't slide on the ground)
-        this.singleAction.timeScale = this.stopped ? 0.15 : 0.45 + this.speed * 0.65;
+        this.singleAction.timeScale = this.stopped ? 0.15 : 0.38 + this.speed * 0.55;
         this.mixer.update(dt);
       } else {
         // multi-clip model (.glb): pick a clip by state and cross-fade
