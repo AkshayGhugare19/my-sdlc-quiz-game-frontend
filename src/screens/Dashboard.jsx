@@ -494,9 +494,16 @@ function BadgesPanel({ badges }) {
         <div className="grid grid-cols-3 gap-3">
           {badges.map((b, i) => (
             <div key={i} className="flex flex-col items-center text-center gap-1">
-              <div className="w-14 h-14 rounded-2xl grid place-items-center text-2xl bg-gradient-to-br from-amber-100 to-amber-200 ring-1 ring-amber-300">
-                {b.iconUrl ? <img src={b.iconUrl} alt="" className="w-8 h-8" /> : '🎖️'}
-              </div>
+              {/* Uploaded badge art shows directly at the full badge size;
+                  object-contain keeps its aspect ratio without shrinking or
+                  cropping. Falls back to the default medal tile otherwise. */}
+              {b.iconUrl ? (
+                <img src={b.iconUrl} alt="" className="w-16 h-16 rounded-2xl object-contain" />
+              ) : (
+                <div className="w-14 h-14 rounded-2xl grid place-items-center text-2xl bg-gradient-to-br from-amber-100 to-amber-200 ring-1 ring-amber-300">
+                  🎖️
+                </div>
+              )}
               <div className="text-[11px] font-semibold text-slate-500 leading-tight">{b.name}</div>
             </div>
           ))}
@@ -520,7 +527,7 @@ function GarageCard({ garage, navigate }) {
         <h2 className="text-lg font-extrabold text-royal">Accessories Garage</h2>
         <span className="text-xs font-bold text-slate-400 whitespace-nowrap">{unlocked}/{total} unlocked</span>
       </div>
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex gap-2 overflow-x-auto p-1">
         {items.map((a) => (
           <div
             key={a.id}
