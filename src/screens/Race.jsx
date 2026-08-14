@@ -6,7 +6,23 @@ import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
 import BackButton from '../components/BackButton';
 import GameChoiceModal from '../components/GameChoiceModal';
+import CarPreview from './CarPreview';
 import { accessoryIcon } from '../accessoryIcons';
+
+// Cosmetic-only pacing for the "drive between checkpoints" beat — no backend
+// distance/meters field exists or is needed; this is purely presentational.
+//
+// 👉 TO CHANGE THE CHECKPOINT DISTANCE, edit CHECKPOINT_DISTANCE_M right below
+// (world units ≈ meters — e.g. 20 means "drive ~20m between checkpoints").
+// It's converted to a duration via CHECKPOINT_APPROACH_SPEED, an *average*
+// speed for this beat (deliberately well under the scene's full-speed
+// WORLD_SPEED=30 in game/ThreeRaceScene.js, since the car is accelerating up
+// from a dead stop — 0 → cruising — for most of the beat, not already at
+// speed). Raise CHECKPOINT_DISTANCE_M for a longer drive between checkpoints,
+// lower it for a shorter one.
+const CHECKPOINT_DISTANCE_M = 20;
+const CHECKPOINT_APPROACH_SPEED = 10; // ~m/s, averaged over the accelerate-from-stop beat
+const DRIVE_BEAT_MS = (CHECKPOINT_DISTANCE_M / CHECKPOINT_APPROACH_SPEED) * 1000;
 
 const LANE_COLORS = ['#ef4444', '#14b8a6', '#f59e0b', '#8b5cf6'];
 const LANE_ICONS = ['👥', '📁', '💬', '⭐'];
@@ -99,6 +115,13 @@ export default function Race() {
   const [countdown, setCountdown] = useState(3);
   const [racing, setRacing] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Pre-race NFS-style car showcase — shown for Racing mode only, ahead of the
+  // 3‑2‑1‑GO countdown. Subway Surfer has no car to preview, so it skips straight
+  // to racing (readyToRace below).
+  const [previewDone, setPreviewDone] = useState(false);
+  // Checkpoint gating: the question banner/answer cards + input only appear
+  // while parked at a checkpoint; between checkpoints the car just drives.
+  const [atCheckpoint, setAtCheckpoint] = useState(false);
   const [timer, setTimer] = useState(0);
   const [feedback, setFeedback] = useState(null); // {isCorrect, correctLane, correctLabel, bonus}
   const [accessory, setAccessory] = useState(null); // full unlocked accessory {name, slot, message…}
@@ -134,10 +157,14 @@ export default function Race() {
       .catch((e) => navigate('/hub', { state: { error: e.message }, replace: true }));
   }, [missionId, bundleId, gameChoice]); // eslint-disable-line
 
-  // 2. Countdown 3-2-1-GO — only after the player has chosen a game (the 3D
-  // scene isn't mounted until then, so there's nothing to start before that).
+  // Racing mode pauses on the car-preview showcase before the countdown;
+  // Subway Surfer has no car to preview, so it's ready as soon as it's chosen.
+  const readyToRace = gameChoice === 'subway' || previewDone;
+
+  // 2. Countdown 3-2-1-GO — only once the player is past the pre-race gates
+  // (game choice, and for Racing mode, the car-preview screen).
   useEffect(() => {
-    if (!boot || !gameChoice) return;
+    if (!boot || !readyToRace) return;
     if (countdown < 0) {
       setRacing(true);
       sceneRef.current?.startRacing();
@@ -145,11 +172,25 @@ export default function Race() {
     }
     const t = setTimeout(() => setCountdown((c) => c - 1), 800);
     return () => clearTimeout(t);
-  }, [boot, gameChoice, countdown]);
+  }, [boot, readyToRace, countdown]);
 
-  // 3. Mission timer.
+  // 2b. First checkpoint: drive a beat before the already-fetched opening
+  // question appears, so the race always starts with "start → drive →
+  // checkpoint → question" rather than the question being up instantly.
   useEffect(() => {
     if (!racing) return;
+    const t = setTimeout(() => {
+      sceneRef.current?.enterCheckpoint?.();
+      setAtCheckpoint(true);
+    }, DRIVE_BEAT_MS);
+    return () => clearTimeout(t);
+  }, [racing]);
+
+  // 3. Mission timer — paused while parked at a checkpoint (question showing),
+  // matching the "race temporarily pauses" checkpoint feel. Purely cosmetic:
+  // the authoritative time comes back from the server on every commit().
+  useEffect(() => {
+    if (!racing || atCheckpoint) return;
     const id = setInterval(() => {
       setTimer((t) => {
         if (t <= 1) {
@@ -161,7 +202,7 @@ export default function Race() {
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [racing]); // eslint-disable-line
+  }, [racing, atCheckpoint]); // eslint-disable-line
 
   const finishNow = useCallback(async () => {
     const sid = sessionRef.current?.session?.id;
@@ -183,13 +224,13 @@ export default function Race() {
   }, [navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
   const chooseLane = useCallback((lane) => {
-    if (!racing || busy) return;
+    if (!racing || busy || !atCheckpoint) return;
     setSelected(lane);
     emitterRef.current.emit('setLane', lane);
-  }, [racing, busy]);
+  }, [racing, busy, atCheckpoint]);
 
   const commit = useCallback(async (lane) => {
-    if (!racing || busy) return;
+    if (!racing || busy || !atCheckpoint) return;
     const laneToSend = lane ?? selected;
     setBusy(true);
     setSelected(laneToSend);
@@ -234,6 +275,8 @@ export default function Race() {
         });
       } else {
         sceneRef.current?.applyQuestion();
+        sceneRef.current?.exitCheckpoint?.(); // resume driving from the checkpoint stop
+        setAtCheckpoint(false);
         setPrompt(res.nextQuestion.prompt);
         setLanes(res.nextQuestion.lanes);
         lanesRef.current = res.nextQuestion.lanes;
@@ -242,14 +285,19 @@ export default function Race() {
         setSelected(mid);
         emitterRef.current.emit('setLane', mid);
         setAccessory(null);
+        // drive a beat, then pull into the next checkpoint and reveal the question
+        setTimeout(() => {
+          sceneRef.current?.enterCheckpoint?.();
+          setAtCheckpoint(true);
+        }, DRIVE_BEAT_MS);
       }
     }, 1700);
-  }, [racing, busy, selected, boot, navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
+  }, [racing, busy, atCheckpoint, selected, boot, navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
   // Keyboard controls.
   useEffect(() => {
     const onKey = (e) => {
-      if (!racing || busy) return;
+      if (!racing || busy || !atCheckpoint) return;
       if (e.code === 'ArrowLeft') chooseLane(Math.max(0, selected - 1));
       else if (e.code === 'ArrowRight') chooseLane(Math.min(lanes.length - 1, selected + 1));
       else if (e.code === 'Space' || e.code === 'Enter') {
@@ -259,7 +307,7 @@ export default function Race() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [racing, busy, selected, lanes, chooseLane, commit]);
+  }, [racing, busy, atCheckpoint, selected, lanes, chooseLane, commit]);
 
   // Pre-race prompt: choose Racing or Subway Surfer before anything boots. This
   // gate sits ahead of every entry point (mission / course / bundle / quick /
@@ -272,6 +320,22 @@ export default function Race() {
           setGameChoice(g);
           setGameType(g); // remember it as the default for next time
         }}
+      />
+    );
+  }
+
+  // Racing-mode pre-race showcase: rotate the car, see gear, then Start Race.
+  // The session (boot) keeps loading behind this screen exactly as before —
+  // this just delays showing the countdown/race UI.
+  if (gameChoice === 'racing' && !previewDone) {
+    return (
+      <CarPreview
+        avatarKey={avatar?.key}
+        avatarName={avatar?.name}
+        missionName={boot?.mission?.title}
+        equippedList={equippedList}
+        onStart={() => setPreviewDone(true)}
+        onBack={() => setGameChoice(null)}
       />
     );
   }
@@ -352,104 +416,141 @@ export default function Race() {
           </div>
         </div>
 
-        {/* Checkpoint track with checkered flags */}
+        {/* Checkpoint track with checkered flags — CP markers, current one
+            highlighted; a 🅿️ badge lights up once the car is actually parked */}
         <div className="flex items-center gap-2 mt-3 max-w-2xl mx-auto w-full">
           <CheckeredFlag flip />
           <div className="flex-1 flex items-center">
-            {Array.from({ length: Math.max(total, 1) }).map((_, i) => (
-              <div key={i} className="flex-1 flex items-center">
-                <div
-                  className={`w-4 h-4 rounded-full border-2 shadow ${
-                    i <= idx ? 'bg-teal-400 border-teal-500' : 'bg-white border-[#0f1b33]/70'
-                  }`}
-                />
-                {i < total - 1 && <div className={`flex-1 h-[3px] rounded ${i < idx ? 'bg-teal-400' : 'bg-[#0f1b33]/55'}`} />}
-              </div>
-            ))}
+            {Array.from({ length: Math.max(total, 1) }).map((_, i) => {
+              const isCurrent = i === idx;
+              return (
+                <div key={i} className="flex-1 flex flex-col items-center">
+                  <div className="flex items-center w-full">
+                    <div
+                      className={`w-4 h-4 rounded-full border-2 shadow grid place-items-center text-[8px] leading-none transition ${
+                        i < idx
+                          ? 'bg-teal-400 border-teal-500'
+                          : isCurrent
+                          ? 'bg-amber-400 border-amber-500'
+                          : 'bg-white border-[#0f1b33]/70'
+                      }`}
+                    >
+                      {isCurrent && atCheckpoint ? '🅿️' : ''}
+                    </div>
+                    {i < total - 1 && (
+                      <div className={`flex-1 h-[3px] rounded ${i < idx ? 'bg-teal-400' : 'bg-[#0f1b33]/55'}`} />
+                    )}
+                  </div>
+                  <span className={`text-[8px] font-bold mt-0.5 ${isCurrent ? 'text-amber-600' : 'text-[#0f1b33]/45'}`}>
+                    CP{i + 1}
+                  </span>
+                </div>
+              );
+            })}
           </div>
           <CheckeredFlag />
         </div>
 
-        {/* Question banner */}
-        <div className="mx-auto mt-3 max-w-2xl w-full">
-          <div className="bg-white/95 rounded-2xl px-6 py-3 text-center border-2 border-[#0f1b33]/15 shadow-xl">
-            <span className="font-bold text-[#0f1b33]">{prompt}</span>
-          </div>
-        </div>
-
-        {/* Answer cards A/B/C — each pinned over its own lane (onLaneLayout) */}
-        <div ref={cardRowRef} className="relative mt-4 md:mt-6 h-48 md:h-56 pointer-events-auto">
-          {lanes.map((lane, i) => {
-            const isSel = selected === i;
-            const fbState = feedback
-              ? feedback.correctLane === i
-                ? 'correct'
-                : feedback.isCorrect === false && selected === i
-                ? 'wrong'
-                : null
-              : null;
-            const color = LANE_COLORS[i % LANE_COLORS.length];
-            const tint = laneTint(color);
-            return (
-              // wrapper carries the lane-anchored position; framer-motion owns
-              // the button's own transform, so translateX(-50%) lives here
-              <div
-                key={lane.id}
-                className="absolute top-0"
-                style={{ left: `${(((i + 0.5) / lanes.length) * 100).toFixed(2)}%`, transform: 'translateX(-50%)' }}
-              >
-              <motion.button
-                whileHover={{ y: -4 }}
-                animate={{ scale: isSel ? 1.06 : 1, y: isSel ? -6 : 0 }}
-                onClick={() => (isSel ? commit(i) : chooseLane(i))}
-                className="relative w-28 sm:w-32 md:w-44"
-              >
-                {/* card body — pale wash of the lane color, speech-bubble shape */}
-                <div
-                  className="rounded-2xl pt-3 pb-4 px-3 border-2 transition"
-                  style={{
-                    background: tint,
-                    borderColor:
-                      fbState === 'correct' ? '#22c55e' : fbState === 'wrong' ? '#ef4444' : color,
-                    boxShadow:
-                      fbState === 'correct'
-                        ? '0 0 0 4px rgba(34,197,94,0.4), 0 18px 34px rgba(2,8,20,0.3)'
-                        : fbState === 'wrong'
-                        ? '0 0 0 4px rgba(239,68,68,0.4), 0 18px 34px rgba(2,8,20,0.3)'
-                        : isSel
-                        ? `0 0 0 4px ${color}44, 0 18px 34px rgba(2,8,20,0.3)`
-                        : '0 14px 28px rgba(2,8,20,0.22)',
-                  }}
-                >
-                  {/* colored letter badge inside the bubble */}
-                  <div
-                    className="w-10 h-10 mx-auto rounded-full grid place-items-center text-white font-extrabold text-lg shadow-md"
-                    style={{ background: color }}
-                  >
-                    {LANE_LETTERS[i]}
-                  </div>
-                  <div className="text-[#12213f] text-sm font-bold text-center leading-snug min-h-[2.5rem] mt-2">
-                    {lane.label}
-                  </div>
-                  <div className="text-2xl text-center mt-1" style={{ color }}>
-                    {LANE_ICONS[i % LANE_ICONS.length]}
-                  </div>
+        {/* Checkpoint question — only up while the car is actually parked in the
+            bay; between checkpoints a "driving" banner takes its place. */}
+        <AnimatePresence mode="wait">
+          {atCheckpoint ? (
+            <motion.div key="question" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
+              <div className="mx-auto mt-3 max-w-2xl w-full">
+                <div className="bg-white/95 rounded-2xl px-6 py-3 text-center border-2 border-[#0f1b33]/15 shadow-xl">
+                  <span className="font-bold text-[#0f1b33]">{prompt}</span>
                 </div>
-                {/* long speech-bubble tail pointing at the lane */}
-                <div
-                  className="absolute left-1/2 -translate-x-1/2 -bottom-[18px] w-0 h-0"
-                  style={{
-                    borderLeft: '13px solid transparent',
-                    borderRight: '13px solid transparent',
-                    borderTop: `20px solid ${tint}`,
-                    filter: 'drop-shadow(0 3px 2px rgba(2,8,20,0.18))',
-                  }}
-                />
-              </motion.button>
               </div>
-            );
-          })}
-        </div>
+
+              {/* Answer cards A/B/C — each pinned over its own lane (onLaneLayout) */}
+              <div ref={cardRowRef} className="relative mt-4 md:mt-6 h-48 md:h-56 pointer-events-auto">
+                {lanes.map((lane, i) => {
+                  const isSel = selected === i;
+                  const fbState = feedback
+                    ? feedback.correctLane === i
+                      ? 'correct'
+                      : feedback.isCorrect === false && selected === i
+                      ? 'wrong'
+                      : null
+                    : null;
+                  const color = LANE_COLORS[i % LANE_COLORS.length];
+                  const tint = laneTint(color);
+                  return (
+                    // wrapper carries the lane-anchored position; framer-motion owns
+                    // the button's own transform, so translateX(-50%) lives here
+                    <div
+                      key={lane.id}
+                      className="absolute top-0"
+                      style={{ left: `${(((i + 0.5) / lanes.length) * 100).toFixed(2)}%`, transform: 'translateX(-50%)' }}
+                    >
+                      <motion.button
+                        whileHover={{ y: -4 }}
+                        animate={{ scale: isSel ? 1.06 : 1, y: isSel ? -6 : 0 }}
+                        onClick={() => (isSel ? commit(i) : chooseLane(i))}
+                        className="relative w-28 sm:w-32 md:w-44"
+                      >
+                        {/* card body — pale wash of the lane color, speech-bubble shape */}
+                        <div
+                          className="rounded-2xl pt-3 pb-4 px-3 border-2 transition"
+                          style={{
+                            background: tint,
+                            borderColor:
+                              fbState === 'correct' ? '#22c55e' : fbState === 'wrong' ? '#ef4444' : color,
+                            boxShadow:
+                              fbState === 'correct'
+                                ? '0 0 0 4px rgba(34,197,94,0.4), 0 18px 34px rgba(2,8,20,0.3)'
+                                : fbState === 'wrong'
+                                ? '0 0 0 4px rgba(239,68,68,0.4), 0 18px 34px rgba(2,8,20,0.3)'
+                                : isSel
+                                ? `0 0 0 4px ${color}44, 0 18px 34px rgba(2,8,20,0.3)`
+                                : '0 14px 28px rgba(2,8,20,0.22)',
+                          }}
+                        >
+                          {/* colored letter badge inside the bubble */}
+                          <div
+                            className="w-10 h-10 mx-auto rounded-full grid place-items-center text-white font-extrabold text-lg shadow-md"
+                            style={{ background: color }}
+                          >
+                            {LANE_LETTERS[i]}
+                          </div>
+                          <div className="text-[#12213f] text-sm font-bold text-center leading-snug min-h-[2.5rem] mt-2">
+                            {lane.label}
+                          </div>
+                          <div className="text-2xl text-center mt-1" style={{ color }}>
+                            {LANE_ICONS[i % LANE_ICONS.length]}
+                          </div>
+                        </div>
+                        {/* long speech-bubble tail pointing at the lane */}
+                        <div
+                          className="absolute left-1/2 -translate-x-1/2 -bottom-[18px] w-0 h-0"
+                          style={{
+                            borderLeft: '13px solid transparent',
+                            borderRight: '13px solid transparent',
+                            borderTop: `20px solid ${tint}`,
+                            filter: 'drop-shadow(0 3px 2px rgba(2,8,20,0.18))',
+                          }}
+                        />
+                      </motion.button>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="driving"
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="mx-auto mt-3 max-w-2xl w-full"
+            >
+              <div className="bg-[#0f1b33]/85 rounded-2xl px-6 py-3 text-center border-2 border-cyan-300/25 shadow-xl backdrop-blur-sm">
+                <span className="font-bold text-cyan-200 tracking-wide text-sm">🚗 DRIVING TO NEXT CHECKPOINT…</span>
+              </div>
+              <div className="h-48 md:h-56" />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="flex-1" />
 

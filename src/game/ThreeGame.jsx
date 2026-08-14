@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react';
 import ThreeRaceScene from './ThreeRaceScene';
 import ThreeSubwayScene from './ThreeSubwayScene';
+import ThreeCarPreviewScene from './ThreeCarPreviewScene';
 
-// Both scenes implement the identical imperative contract (constructor shape,
-// onLaneLayout, setLane, startRacing/applyQuestion/playFeedback/resetSigns/
-// destroy), so the Race screen drives whichever one it's given interchangeably.
-const SCENES = { racing: ThreeRaceScene, subway: ThreeSubwayScene };
+// All three scenes implement the identical imperative contract (constructor
+// shape, onLaneLayout, setLane, startRacing/applyQuestion/playFeedback/
+// resetSigns/destroy — the preview scene's are no-ops), so the Race/CarPreview
+// screens drive whichever one they're given interchangeably.
+const SCENES = { racing: ThreeRaceScene, subway: ThreeSubwayScene, preview: ThreeCarPreviewScene };
 
 // Minimal event emitter — replaces Phaser.Events.EventEmitter for the one
 // 'setLane' channel the Race screen uses, without pulling Phaser in.

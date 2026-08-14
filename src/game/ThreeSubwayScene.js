@@ -396,6 +396,7 @@ export default class ThreeSubwayScene {
     // motion / gameplay state (same semantics as the car scene)
     this.locked = true; // countdown / feedback → jog instead of sprint
     this.stopped = false; // hard stop while answer feedback shows
+    this.parked = false; // true while stopped in-lane at a checkpoint, answering
     this.pendingBoost = false; // sprint burst after a correct answer
     this.speed = 0; // 0..1.5
     this.prevSpeed = 0;
@@ -1606,11 +1607,13 @@ export default class ThreeSubwayScene {
   update(dt) {
     this.elapsed += dt;
 
-    // speed: full stop during feedback, jog in countdown, sprint burst on relaunch
+    // speed: full stop during feedback or while stopped in-lane at a
+    // checkpoint, jog in countdown, sprint burst on relaunch
     const boosting = this.elapsed < this.boostUntil;
-    this.speedTarget = this.stopped ? 0 : boosting ? 1.5 : this.locked ? 0.32 : 1;
-    this.speed += (this.speedTarget - this.speed) * Math.min(1, dt * (this.stopped ? 7 : 3));
-    if (this.stopped && this.speed < 0.01) this.speed = 0;
+    const braking = this.stopped || this.parked;
+    this.speedTarget = braking ? 0 : boosting ? 1.5 : this.locked ? 0.32 : 1;
+    this.speed += (this.speedTarget - this.speed) * Math.min(1, dt * (braking ? 7 : 3));
+    if (braking && this.speed < 0.01) this.speed = 0;
     const dist = this.speed * WORLD_SPEED * dt;
 
     // scroll every textured surface (ballast, platforms)
@@ -1693,11 +1696,11 @@ export default class ThreeSubwayScene {
         // single-clip model (Mixamo run): always play, playback speed = game speed
         // so the legs slow to a shuffle when stopped and pump on a sprint (tuned
         // to the slower WORLD_SPEED so the feet don't slide on the ground)
-        this.singleAction.timeScale = this.stopped ? 0.15 : 0.38 + this.speed * 0.55;
+        this.singleAction.timeScale = (this.stopped || this.parked) ? 0.15 : 0.38 + this.speed * 0.55;
         this.mixer.update(dt);
       } else {
         // multi-clip model (.glb): pick a clip by state and cross-fade
-        const clip = this.stopped ? (this.pendingBoost ? 'Jump' : 'Idle') : this.locked ? 'Walking' : 'Running';
+        const clip = (this.stopped || this.parked) ? (this.pendingBoost ? 'Jump' : 'Idle') : this.locked ? 'Walking' : 'Running';
         this.fadeToAction(clip);
         this.mixer.update(dt * (clip === 'Running' ? 0.7 + this.speed : 1));
       }
@@ -1858,6 +1861,25 @@ export default class ThreeSubwayScene {
       this.smokeHold = true; // keep the dust up through the feedback pause
       this.shake = 0.8;
     }
+  }
+
+  // Checkpoint stop — same contract as ThreeRaceScene's enterCheckpoint/
+  // exitCheckpoint. The runner brakes to a full stop IN LANE (on the track,
+  // it never steps off it); the player then steers across lanes (same
+  // chooseLane/commit as always) to pick an answer while standing still. The
+  // question overlay only shows once it's actually stopped.
+  enterCheckpoint() {
+    this.parked = true;
+    this.locked = true;
+    this.dustOn = false;
+  }
+
+  // Resumes running toward the next checkpoint, re-centering to the middle
+  // lane first (same relaunch as applyQuestion()).
+  exitCheckpoint() {
+    this.parked = false;
+    this.locked = false;
+    this.currentLane = Math.floor(this.laneCount / 2);
   }
 
   resetSigns() {
