@@ -20,7 +20,7 @@ import { accessoryIcon } from '../accessoryIcons';
 // from a dead stop — 0 → cruising — for most of the beat, not already at
 // speed). Raise CHECKPOINT_DISTANCE_M for a longer drive between checkpoints,
 // lower it for a shorter one.
-const CHECKPOINT_DISTANCE_M = 20;
+const CHECKPOINT_DISTANCE_M = 60;
 const CHECKPOINT_APPROACH_SPEED = 10; // ~m/s, averaged over the accelerate-from-stop beat
 const DRIVE_BEAT_MS = (CHECKPOINT_DISTANCE_M / CHECKPOINT_APPROACH_SPEED) * 1000;
 
@@ -223,11 +223,14 @@ export default function Race() {
     }
   }, [navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
+  // Steering works any time the car is racing — not just while parked at a
+  // checkpoint — so the player can freely drive left/right between
+  // checkpoints too; only committing an answer (below) requires atCheckpoint.
   const chooseLane = useCallback((lane) => {
-    if (!racing || busy || !atCheckpoint) return;
+    if (!racing || busy) return;
     setSelected(lane);
     emitterRef.current.emit('setLane', lane);
-  }, [racing, busy, atCheckpoint]);
+  }, [racing, busy]);
 
   const commit = useCallback(async (lane) => {
     if (!racing || busy || !atCheckpoint) return;
@@ -294,10 +297,23 @@ export default function Race() {
     }, 1700);
   }, [racing, busy, atCheckpoint, selected, boot, navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
-  // Keyboard controls.
+  // Keyboard controls — ←/→ steer (any time), ↑/↓ throttle up/brake (held,
+  // any time), Space/Enter commit (only takes effect while atCheckpoint,
+  // guarded inside commit() itself). heldRef tracks which of ↑/↓ are
+  // currently held so releasing one doesn't cancel the other.
+  const heldRef = useRef(new Set());
   useEffect(() => {
-    const onKey = (e) => {
-      if (!racing || busy || !atCheckpoint) return;
+    const applyThrottle = () => {
+      const dir = heldRef.current.has('ArrowUp') ? 1 : heldRef.current.has('ArrowDown') ? -1 : 0;
+      sceneRef.current?.setThrottleInput?.(dir);
+    };
+    const onKeyDown = (e) => {
+      if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+        heldRef.current.add(e.code);
+        applyThrottle();
+        return;
+      }
+      if (!racing || busy) return;
       if (e.code === 'ArrowLeft') chooseLane(Math.max(0, selected - 1));
       else if (e.code === 'ArrowRight') chooseLane(Math.min(lanes.length - 1, selected + 1));
       else if (e.code === 'Space' || e.code === 'Enter') {
@@ -305,9 +321,19 @@ export default function Race() {
         commit(selected);
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [racing, busy, atCheckpoint, selected, lanes, chooseLane, commit]);
+    const onKeyUp = (e) => {
+      if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+        heldRef.current.delete(e.code);
+        applyThrottle();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [racing, busy, selected, lanes, chooseLane, commit]);
 
   // Pre-race prompt: choose Racing or Subway Surfer before anything boots. This
   // gate sits ahead of every entry point (mission / course / bundle / quick /
@@ -347,7 +373,9 @@ export default function Race() {
   const headerSub = isSubway
     ? 'Switch to the correct track to answer. Press the Spacebar or right-click twice to lock in.'
     : 'Steer into the correct lane to answer. Press the Spacebar or right-click twice to stop.';
-  const steerHint = isSubway ? '← → switch track · Space / Enter to lock in' : '← → steer · Space / Enter to lock in';
+  const steerHint = isSubway
+    ? '← → switch track · ↑ ↓ speed up / brake · Space / Enter to lock in'
+    : '← → steer · ↑ ↓ speed up / brake · Space / Enter to stop';
   const total = hud?.questionTotal ?? 0;
   const idx = hud?.questionIndex ?? 0;
 

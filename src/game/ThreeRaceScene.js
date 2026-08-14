@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildCar as buildCarMesh, canvasTexture } from './carBuilder';
+import { buildTrackCurve, sampleTrack, headingAngle, buildRibbon, buildWall, placeAlongTrack } from './trackPath';
 
 // Real-3D replacement for the old Phaser pseudo-3D road (RaceScene.js).
 // Renders a sunset circuit — asphalt, kerbs, sponsor rails, overhead gantries,
@@ -9,10 +10,18 @@ import { buildCar as buildCarMesh, canvasTexture } from './carBuilder';
 // emitter), so all game logic stays untouched and server-authoritative.
 // The car mesh itself (paint/driver palettes, geometry, accessories) lives in
 // carBuilder.js, shared with the pre-race ThreeCarPreviewScene.
+//
+// The track is a real, fixed, closed-loop circuit (trackPath.js) — sweeping
+// curves plus a chicane — built once; the car actually travels around it
+// (looping lap after lap), rather than the world scrolling past a stationary
+// car. See update() for how position/heading/camera are derived from the
+// curve each frame.
 
 const LANE_W = 4.4; // world units per lane
-const ROAD_LEN = 620; // how far the track stretches ahead
 const WORLD_SPEED = 30; // units/sec at full speed
+const TRACK_RADIUS = 150; // base radius of the circuit (see trackPath.js)
+const CAM_BEHIND = 9; // world units the chase camera trails behind the car, along the track
+const CAM_AHEAD = 24; // world units ahead the camera looks, along the track
 
 function skyTexture() {
   return canvasTexture(4, 512, (ctx, w, h) => {
@@ -206,9 +215,23 @@ export default class ThreeRaceScene {
     this.smokeOn = false;
     this.flamesOn = false;
     this.parked = false; // true while stopped on the road at a checkpoint, answering
+    this.manualThrottle = 1; // player-controlled cruise level while driving (↑/↓ keys)
+    this.throttleInput = 0; // -1 (↓ held) / 0 / 1 (↑ held) — see setThrottleInput()
 
     this.roadW = laneCount * LANE_W + 1.6;
-    this.parkX = this.roadW / 2 + 2.6; // roadside checkpoint sign, right shoulder (decorative only)
+    this.parkX = this.roadW / 2 + 2.6; // roadside checkpoint sign lane, right shoulder (decorative only)
+
+    // The real, fixed, closed-loop circuit — see trackPath.js. distTraveled is
+    // the car's arc-length position along it (keeps counting up; sampleTrack
+    // wraps it into a lap fraction), lateralOffset is how far across the
+    // track (steering) it currently sits.
+    const { curve, totalLength } = buildTrackCurve(TRACK_RADIUS);
+    this.curve = curve;
+    this.totalLength = totalLength;
+    this.distTraveled = 0;
+    this.lateralOffset = this.laneX(this.currentLane);
+    this.camPos = new THREE.Vector3();
+    this.camLookAt = new THREE.Vector3();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -251,8 +274,13 @@ export default class ThreeRaceScene {
 
   buildLights() {
     this.scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x6d5f45, 0.95));
+    // The sun (and its shadow frustum) and its sky-disc sprite are pure
+    // atmosphere, not tied to the track's shape — since the car now really
+    // travels the full loop (not just a few lanes near the origin), both are
+    // re-centred on the car every frame in update() so the shadow always
+    // lands under it and the sun stays in a consistent spot in the sky.
     const sun = new THREE.DirectionalLight(0xffe2b0, 2.0);
-    sun.position.set(-30, 55, -70); // high sun = short, tidy car shadow
+    sun.position.set(-30, 55, -70);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.camera.left = -16;
@@ -262,10 +290,11 @@ export default class ThreeRaceScene {
     sun.shadow.camera.far = 200;
     this.scene.add(sun);
     this.scene.add(sun.target);
+    this.sun = sun;
 
-    const disc = sunSprite();
-    disc.position.set(-55, 26, -380);
-    this.scene.add(disc);
+    this.sunDisc = sunSprite();
+    this.sunDisc.position.set(-55, 26, -380);
+    this.scene.add(this.sunDisc);
 
     // soft fill from behind the camera so the car isn't backlit into silhouette
     const fill = new THREE.DirectionalLight(0xdceaff, 0.7);
@@ -275,82 +304,80 @@ export default class ThreeRaceScene {
 
   buildWorld() {
     const halfRoad = this.roadW / 2;
-    this.movers = []; // pooled objects that scroll toward the camera
-    this.scrollMats = []; // {tex, axis, sign, perUnit} texture-scrolled surfaces
+    const { curve, totalLength } = this;
+    this.trackGroup = new THREE.Group(); // everything tied to the circuit's own shape
+    this.scene.add(this.trackGroup);
 
-    const addScrollPlane = (tex, w, len, x, y, tilesAlong, sign = 1, axis = 'y') => {
-      const geo = new THREE.PlaneGeometry(w, len);
-      const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(x, y, -ROAD_LEN / 2 + 30);
-      mesh.receiveShadow = true;
-      tex.repeat.set(1, tilesAlong);
-      this.scene.add(mesh);
-      this.scrollMats.push({ tex, axis, sign, perUnit: tilesAlong / ROAD_LEN });
-      return mesh;
-    };
+    // road + kerbs + sand + grass — ribbons that actually follow the curve
+    this.trackGroup.add(buildRibbon({
+      curve, totalLength, width: this.roadW,
+      material: new THREE.MeshStandardMaterial({ map: roadTexture(this.laneCount), roughness: 1, metalness: 0 }),
+      uAlongTilesPerUnit: 1 / 20,
+    }));
+    [-1, 1].forEach((s) => this.trackGroup.add(buildRibbon({
+      curve, totalLength, width: 0.8, y: 0.01, offset: s * (halfRoad + 0.4),
+      material: new THREE.MeshStandardMaterial({ map: kerbTexture(), roughness: 1 }),
+      uAlongTilesPerUnit: 1 / 4,
+    })));
+    [-1, 1].forEach((s) => this.trackGroup.add(buildRibbon({
+      curve, totalLength, width: 5, y: -0.01, offset: s * (halfRoad + 3.3),
+      material: new THREE.MeshStandardMaterial({ map: sandTexture(), roughness: 1 }),
+      uAlongTilesPerUnit: 1 / 10,
+    })));
+    this.trackGroup.add(buildRibbon({
+      curve, totalLength, width: 240, y: -0.03,
+      material: new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 }),
+      uAcrossTiles: 20, uAlongTilesPerUnit: 1 / 12,
+    }));
 
-    // road + kerbs + sand + grass
-    addScrollPlane(roadTexture(this.laneCount), this.roadW, ROAD_LEN, 0, 0, ROAD_LEN / 20);
-    addScrollPlane(kerbTexture(), 0.8, ROAD_LEN, -(halfRoad + 0.4), 0.01, ROAD_LEN / 4);
-    addScrollPlane(kerbTexture(), 0.8, ROAD_LEN, halfRoad + 0.4, 0.01, ROAD_LEN / 4);
-    addScrollPlane(sandTexture(), 5, ROAD_LEN, -(halfRoad + 3.3), -0.01, ROAD_LEN / 10);
-    addScrollPlane(sandTexture(), 5, ROAD_LEN, halfRoad + 3.3, -0.01, ROAD_LEN / 10);
-    const grass = new THREE.Mesh(
-      new THREE.PlaneGeometry(700, ROAD_LEN + 200),
-      new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 }),
-    );
-    grass.rotation.x = -Math.PI / 2;
-    grass.position.set(0, -0.03, -ROAD_LEN / 2 + 60);
-    grass.material.map.repeat.set(60, 70);
-    grass.receiveShadow = true;
-    this.scene.add(grass);
+    // sponsor rails on both sides, following the curve
+    [-1, 1].forEach((s) => this.trackGroup.add(buildWall({
+      curve, totalLength, height: 1.1, y0: 0, offset: s * (halfRoad + 5.9),
+      material: new THREE.MeshStandardMaterial({ map: railTexture(), roughness: 0.8, side: THREE.DoubleSide }),
+      uAlongTilesPerUnit: 1 / 26,
+    })));
 
-    // sponsor rails on both sides (texture-scrolled so they fly past)
-    const railTex = railTexture();
-    const railTexR = railTexture();
-    const mkRail = (x, rotY, tex, sign) => {
-      const m = new THREE.Mesh(
-        new THREE.PlaneGeometry(ROAD_LEN, 1.1),
-        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, side: THREE.DoubleSide }),
-      );
-      m.position.set(x, 0.55, -ROAD_LEN / 2 + 30);
-      m.rotation.y = rotY;
-      tex.repeat.set(ROAD_LEN / 26, 1);
-      this.scene.add(m);
-      this.scrollMats.push({ tex, axis: 'x', sign, perUnit: (ROAD_LEN / 26) / ROAD_LEN });
-    };
-    // rotY -90°: local +u points toward +z (camera) → offset decreases; +90°: opposite.
-    mkRail(halfRoad + 5.9, -Math.PI / 2, railTex, -1);
-    mkRail(-(halfRoad + 5.9), Math.PI / 2, railTexR, 1);
-
-    // distant hills
+    // distant hills — a full static ring around the whole circuit (not tied
+    // to the car), so there's always a backdrop no matter which way the
+    // track is currently curving; they fade out via fog at the far edge.
     const hillMat = new THREE.MeshBasicMaterial({ color: 0x9db38a, fog: true });
-    for (let i = 0; i < 7; i++) {
-      const hill = new THREE.Mesh(new THREE.SphereGeometry(60 + (i % 3) * 30, 16, 12), hillMat);
+    const HILL_COUNT = 20;
+    const HILL_RING_R = TRACK_RADIUS + 260;
+    for (let i = 0; i < HILL_COUNT; i++) {
+      const a = (i / HILL_COUNT) * Math.PI * 2;
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(70 + (i % 3) * 34, 16, 12), hillMat);
       hill.scale.y = 0.22;
-      hill.position.set(-260 + i * 90, -4, -430 - (i % 2) * 60);
+      hill.position.set(Math.sin(a) * HILL_RING_R, -4, -Math.cos(a) * HILL_RING_R);
       this.scene.add(hill);
     }
 
-    // ── pooled scenery that scrolls past ──
+    // ── scenery placed once, statically, around the fixed loop ──
     const gantryTex = gantryTexture();
-    for (let i = 0; i < 3; i++) this.addMover(this.makeGantry(gantryTex), i * 210);
+    placeAlongTrack({
+      curve, totalLength, group: this.trackGroup, count: Math.max(3, Math.round(totalLength / 165)),
+      make: () => this.makeGantry(gantryTex),
+    });
     const checkpointTex = checkpointSignTexture();
-    for (let i = 0; i < 4; i++) this.addMover(this.makeCheckpointSign(checkpointTex), i * 158 + 55);
-    for (let i = 0; i < 6; i++) {
-      this.addMover(this.makeGrandstand(), i * 105 + 40, { side: 1 });
-      this.addMover(this.makeTree(), i * 105 + 15, { side: -1 });
-      this.addMover(this.makeTree(), i * 105 + 70, { side: -1, far: true });
-      this.addMover(this.makeLightPole(), i * 105 + 60, { side: 1 });
-    }
-  }
-
-  addMover(obj, offset, { side } = {}) {
-    obj.position.z = -offset - 30;
-    this.scene.add(obj);
-    this.movers.push({ obj, span: 630, side });
+    placeAlongTrack({
+      curve, totalLength, group: this.trackGroup, count: Math.max(4, Math.round(totalLength / 150)),
+      make: () => this.makeCheckpointSign(checkpointTex), sideOffset: this.parkX, startT: 0.03,
+    });
+    placeAlongTrack({
+      curve, totalLength, group: this.trackGroup, count: Math.max(4, Math.round(totalLength / 180)),
+      make: () => this.makeGrandstand(), sideOffset: halfRoad + 13, startT: 0.06,
+    });
+    placeAlongTrack({
+      curve, totalLength, group: this.trackGroup, count: Math.round(totalLength / 35),
+      make: () => this.makeTree(0.8 + Math.random() * 0.7), sideOffset: -(halfRoad + 10),
+    });
+    placeAlongTrack({
+      curve, totalLength, group: this.trackGroup, count: Math.round(totalLength / 42),
+      make: () => this.makeTree(1.1 + Math.random() * 0.6), sideOffset: -(halfRoad + 20), startT: 0.02,
+    });
+    placeAlongTrack({
+      curve, totalLength, group: this.trackGroup, count: Math.round(totalLength / 90),
+      make: () => this.makeLightPole(), sideOffset: halfRoad + 6.8, startT: 0.01,
+    });
   }
 
   makeGantry(tex) {
@@ -372,35 +399,34 @@ export default class ThreeRaceScene {
     return g;
   }
 
-  // Roadside checkpoint sign, planted on the right shoulder — a visual cue
-  // that a checkpoint is coming up, not a synced trigger (the car itself
-  // stops on the road, it never actually pulls in next to the sign).
+  // Roadside checkpoint sign — a visual cue that a checkpoint is coming up,
+  // not a synced trigger (the car itself stops on the road, in-lane; it
+  // never actually pulls in next to the sign).
   makeCheckpointSign(tex) {
     const g = new THREE.Group();
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x2a3446, roughness: 0.6 });
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.4, 10), poleMat);
-    pole.position.set(this.parkX, 1.7, 0);
+    pole.position.set(0, 1.7, 0);
     pole.castShadow = true;
     g.add(pole);
     const plate = new THREE.Mesh(
       new THREE.PlaneGeometry(1.7, 2.1),
       new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, side: THREE.DoubleSide }),
     );
-    plate.position.set(this.parkX, 3.3, 0);
+    plate.position.set(0, 3.3, 0);
     g.add(plate);
     return g;
   }
 
   makeGrandstand() {
     const g = new THREE.Group();
-    const halfRoad = this.roadW / 2;
     const colors = [0x8f2f3b, 0x2f4f8f, 0x8a713a];
     for (let r = 0; r < 3; r++) {
       const row = new THREE.Mesh(
         new THREE.BoxGeometry(26, 1.5, 3),
         new THREE.MeshStandardMaterial({ color: colors[r % colors.length], roughness: 0.9 }),
       );
-      row.position.set(halfRoad + 13 + r * 2.4, 0.75 + r * 1.5, 0);
+      row.position.set(r * 2.4, 0.75 + r * 1.5, 0);
       row.castShadow = true;
       g.add(row);
     }
@@ -408,14 +434,13 @@ export default class ThreeRaceScene {
       new THREE.BoxGeometry(26, 0.3, 9),
       new THREE.MeshStandardMaterial({ color: 0xd8dde5, roughness: 0.6 }),
     );
-    roof.position.set(halfRoad + 15.5, 6.2, 0);
+    roof.position.set(2.5, 6.2, 0);
     g.add(roof);
     return g;
   }
 
-  makeTree() {
+  makeTree(scale) {
     const g = new THREE.Group();
-    const halfRoad = this.roadW / 2;
     const trunk = new THREE.Mesh(
       new THREE.CylinderGeometry(0.25, 0.35, 2.4, 6),
       new THREE.MeshStandardMaterial({ color: 0x6b4a2c, roughness: 1 }),
@@ -428,9 +453,7 @@ export default class ThreeRaceScene {
     crown.position.y = 4.4;
     crown.castShadow = true;
     g.add(trunk, crown);
-    const dist = halfRoad + 10 + Math.random() * 14;
-    g.position.x = -dist;
-    g.scale.setScalar(0.8 + Math.random() * 0.7);
+    g.scale.setScalar(scale);
     return g;
   }
 
@@ -439,20 +462,21 @@ export default class ThreeRaceScene {
     const halfRoad = this.roadW / 2;
     const mat = new THREE.MeshStandardMaterial({ color: 0xb9c2ce, roughness: 0.5, metalness: 0.6 });
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 7, 8), mat);
-    pole.position.set(halfRoad + 6.8, 3.5, 0);
+    pole.position.set(0, 3.5, 0);
     const arm = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.14, 0.14), mat);
-    arm.position.set(halfRoad + 5.7, 6.9, 0);
+    arm.position.set(-1.1, 6.9, 0);
     const lamp = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 0.18, 0.4),
       new THREE.MeshStandardMaterial({ color: 0xfff2cc, emissive: 0xffedb8, emissiveIntensity: 0.7 }),
     );
-    lamp.position.set(halfRoad + 4.7, 6.8, 0);
+    lamp.position.set(-2.1, 6.8, 0);
     g.add(pole, arm, lamp);
+    void halfRoad;
     return g;
   }
 
   // Car mesh geometry/materials live in carBuilder.js (shared with the pre-race
-  // ThreeCarPreviewScene); this wrapper places it in the world and keeps the
+  // ThreeCarPreviewScene); this wrapper places it on the track and keeps the
   // per-part references this scene animates (wheels, flames, smoke, etc.).
   buildCar() {
     const parts = buildCarMesh({
@@ -469,7 +493,9 @@ export default class ThreeRaceScene {
     this.trailMesh = parts.trailMesh;
     this.specialGem = parts.specialGem;
 
-    parts.car.position.set(this.laneX(this.currentLane), 0, 0);
+    const { point, tangent, right } = sampleTrack(this.curve, 0);
+    parts.car.position.set(point.x + right.x * this.lateralOffset, 0, point.z + right.z * this.lateralOffset);
+    parts.car.rotation.y = headingAngle(tangent);
     this.car = parts.car;
     this.scene.add(this.car);
   }
@@ -495,45 +521,56 @@ export default class ThreeRaceScene {
 
     // speed: full stop during answer feedback or while stopped at a checkpoint
     // (right on the road, in-lane — no pull-off), crawl in countdown, boost on
-    // relaunch
+    // relaunch, otherwise the player's own ↑/↓ throttle while free-driving
     const boosting = this.elapsed < this.boostUntil;
     const braking = this.stopped || this.parked;
-    this.speedTarget = braking ? 0 : boosting ? 1.45 : this.locked ? 0.3 : 1;
+    if (!braking && !this.locked) {
+      this.manualThrottle = THREE.MathUtils.clamp(this.manualThrottle + this.throttleInput * dt * 0.8, 0.2, 1.6);
+    }
+    this.speedTarget = braking ? 0 : boosting ? 1.45 : this.locked ? 0.3 : this.manualThrottle;
     // brake hard into a stop, ease back up when racing resumes
     this.speed += (this.speedTarget - this.speed) * Math.min(1, dt * (braking ? 7 : 3));
     if (braking && this.speed < 0.01) this.speed = 0;
     const dist = this.speed * WORLD_SPEED * dt;
 
+    // advance along the fixed circuit (sampleTrack wraps this into a lap
+    // fraction automatically, so the car just keeps lapping)
+    this.distTraveled += dist;
+    const { point, tangent, right } = sampleTrack(this.curve, this.distTraveled / this.totalLength);
+    const heading = headingAngle(tangent);
+
     // brake dive / launch squat from acceleration
     const accel = (this.speed - this.prevSpeed) / Math.max(dt, 1e-4);
     this.prevSpeed = this.speed;
-    this.car.rotation.x = THREE.MathUtils.clamp(accel * 0.045, -0.09, 0.06);
-
-    // scroll every textured surface
-    for (const s of this.scrollMats) {
-      s.tex.offset[s.axis] += s.sign * dist * s.perUnit;
-    }
-    // scroll pooled scenery
-    for (const m of this.movers) {
-      m.obj.position.z += dist;
-      if (m.obj.position.z > 14) m.obj.position.z -= m.span;
-    }
 
     // wheels
     const wheelRot = (dist / 0.42);
     this.wheels.forEach((w) => (w.rotation.x += wheelRot));
 
-    // steer toward the current lane with body roll + yaw — same lane-steering
-    // whether driving or stopped at a checkpoint, so the car brakes to a stop
-    // ON the road (in whichever lane it's in) instead of pulling off it; the
-    // player then steers across lanes to pick an answer while stationary.
-    const targetX = this.laneX(this.currentLane);
-    const dx = targetX - this.car.position.x;
-    this.car.position.x += dx * Math.min(1, dt * 7);
-    this.car.rotation.y = THREE.MathUtils.clamp(-dx * 0.14, -0.3, 0.3);
-    this.car.rotation.z = THREE.MathUtils.clamp(dx * 0.05, -0.12, 0.12);
+    // steer across the track (lateral offset from centreline) toward the
+    // current lane, with body roll + yaw layered on top of the track's own
+    // heading — same lane-steering whether driving or stopped at a
+    // checkpoint, so the car brakes to a stop ON the road (in whichever lane
+    // it's in) instead of pulling off it; the player then steers across
+    // lanes to pick an answer while stationary.
+    const targetLateral = this.laneX(this.currentLane);
+    const dLat = targetLateral - this.lateralOffset;
+    this.lateralOffset += dLat * Math.min(1, dt * 7);
+
+    this.car.position.set(point.x + right.x * this.lateralOffset, 0, point.z + right.z * this.lateralOffset);
+    this.car.rotation.x = THREE.MathUtils.clamp(accel * 0.045, -0.09, 0.06);
+    this.car.rotation.y = heading + THREE.MathUtils.clamp(-dLat * 0.14, -0.3, 0.3);
+    this.car.rotation.z = THREE.MathUtils.clamp(dLat * 0.05, -0.12, 0.12);
     // subtle bounce
     this.car.position.y = Math.sin(this.elapsed * 22) * 0.012 * this.speed;
+
+    // keep the sun (+ its shadow frustum) and sky disc centred on wherever
+    // the car currently is on the loop — pure atmosphere, not tied to the
+    // track's actual shape, but the shadow frustum is a fixed-size box that
+    // has to stay near the car to catch its shadow at all.
+    this.sun.position.set(this.car.position.x - 30, 55, this.car.position.z - 70);
+    this.sun.target.position.copy(this.car.position);
+    this.sunDisc.position.set(this.car.position.x - 55, 26, this.car.position.z - 380);
 
     // flames flicker
     const flameOn = this.flamesOn || boosting;
@@ -569,28 +606,51 @@ export default class ThreeRaceScene {
       p.material.opacity = 0.55 * (1 - t);
     });
 
-    // camera: chase with lag, FOV widens with speed, shake decays
+    // camera: chase the car ALONG THE CURVE (sampled slightly behind/ahead of
+    // it, not a fixed world-space offset), so it stays on the road through
+    // bends instead of cutting across the infield. FOV widens with speed,
+    // shake decays; both camera position and look-at ease toward their
+    // targets so bends don't whip the view around.
     this.shake = Math.max(0, this.shake - dt * 2.2);
     const shx = (Math.random() - 0.5) * this.shake * 0.5;
     const shy = (Math.random() - 0.5) * this.shake * 0.35;
-    // mid-high chase camera: the whole car (medium size) sits in the strip
-    // BELOW the answer bubbles — helmet at the bubble tails, wheels just above
-    // the bottom edge — so it is never hidden behind the cards
-    const camX = this.car.position.x * 0.6;
-    this.camera.position.set(camX, 5.2, 8.6);
-    this.camera.lookAt(this.car.position.x * 0.85, 0.3, -26);
+    const lateralBias = this.lateralOffset * 0.6;
+    const behind = sampleTrack(this.curve, (this.distTraveled - CAM_BEHIND) / this.totalLength);
+    const ahead = sampleTrack(this.curve, (this.distTraveled + CAM_AHEAD) / this.totalLength);
+    const camTarget = new THREE.Vector3(
+      behind.point.x + behind.right.x * lateralBias,
+      5.2,
+      behind.point.z + behind.right.z * lateralBias,
+    );
+    const lookTarget = new THREE.Vector3(
+      ahead.point.x + ahead.right.x * lateralBias * 0.85,
+      0.3,
+      ahead.point.z + ahead.right.z * lateralBias * 0.85,
+    );
+    if (this._camInit) {
+      this.camPos.lerp(camTarget, Math.min(1, dt * 5));
+      this.camLookAt.lerp(lookTarget, Math.min(1, dt * 5));
+    } else {
+      this.camPos.copy(camTarget);
+      this.camLookAt.copy(lookTarget);
+      this._camInit = true;
+    }
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(this.camLookAt);
     const fovTarget = this.baseFov + this.speed * 6;
     this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, dt * 4);
     this.camera.updateProjectionMatrix();
 
-    // project each lane at the car's row — where the lanes are widest apart on
-    // screen — (pre-shake, so the overlay cards pinned to the lanes don't
-    // jitter) and report it; the Race screen anchors each bubble over its lane
+    // project each lane (at the car's own point on the track) to screen —
+    // (pre-shake, so the overlay cards pinned to the lanes don't jitter) and
+    // report it; the Race screen anchors each bubble over its lane
     if (this.onLaneLayout) {
       const v = new THREE.Vector3();
       const xs = [];
       for (let i = 0; i < this.laneCount; i++) {
-        v.set(this.laneX(i), 0.2, 0).project(this.camera);
+        const lx = point.x + right.x * this.laneX(i);
+        const lz = point.z + right.z * this.laneX(i);
+        v.set(lx, 0.2, lz).project(this.camera);
         xs.push((v.x + 1) / 2);
       }
       if (!this.lastLaneXs || xs.some((x, i) => Math.abs(x - this.lastLaneXs[i]) > 0.003)) {
@@ -615,6 +675,13 @@ export default class ThreeRaceScene {
     this.locked = false;
     this.stopped = false;
     this.flamesOn = false;
+    this.manualThrottle = 1;
+  }
+
+  // ↑/↓ throttle control while free-driving (ignored while braking/locked —
+  // see update()). dir: 1 = accelerate, -1 = brake/slow, 0 = coast.
+  setThrottleInput(dir) {
+    this.throttleInput = THREE.MathUtils.clamp(dir, -1, 1);
   }
 
   applyQuestion() {
@@ -644,12 +711,11 @@ export default class ThreeRaceScene {
     }
   }
 
-  // Checkpoint stop (racing mode only — Race.jsx calls these optionally via
-  // `sceneRef.current?.enterCheckpoint?.()` so Subway Surfer keeps working
-  // unchanged). The car brakes to a full stop ON THE ROAD, in whatever lane
-  // it's in — it never leaves the racing line — so the player can then steer
-  // across lanes (same chooseLane/commit as always) to pick an answer while
-  // stationary. The question overlay only shows once it's actually stopped.
+  // Checkpoint stop. The car brakes to a full stop ON THE ROAD, in whatever
+  // lane it's in — it never leaves the racing line — so the player can then
+  // steer across lanes (same chooseLane/commit as always) to pick an answer
+  // while stationary. The question overlay only shows once it's actually
+  // stopped. (ThreeSubwayScene implements the same pair for Subway Surfer.)
   enterCheckpoint() {
     this.parked = true;
     this.locked = true;
@@ -658,11 +724,13 @@ export default class ThreeRaceScene {
   }
 
   // Resumes driving toward the next checkpoint, re-centering to the middle
-  // lane first (same relaunch as applyQuestion()).
+  // lane first (same relaunch as applyQuestion()) and resetting the ↑/↓
+  // throttle back to a normal cruise.
   exitCheckpoint() {
     this.parked = false;
     this.locked = false;
     this.currentLane = Math.floor(this.laneCount / 2);
+    this.manualThrottle = 1;
   }
 
   resetSigns() {

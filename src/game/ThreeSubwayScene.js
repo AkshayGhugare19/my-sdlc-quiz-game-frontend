@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { buildTrackCurve, sampleTrack, headingAngle, buildRibbon, buildWall, placeAlongTrack } from './trackPath';
 
 // A rigged, animated character loaded at runtime and driven by an AnimationMixer.
 // If it fails to load, the procedural cartoon runner (buildCharacter) stays as a
@@ -35,9 +36,10 @@ const RUNNER_COLORS = {
 };
 
 const LANE_W = 3.2; // world units between adjacent tracks
-const TRACK_LEN = 660; // how far the tracks stretch ahead
 const WORLD_SPEED = 18; // units/sec at full sprint (calmer pace)
-const SPAN = 720; // recycle distance for scrolling scenery
+const TRACK_RADIUS = 130; // base radius of the circuit (see trackPath.js)
+const CAM_BEHIND = 8; // world units the chase camera trails behind the runner, along the track
+const CAM_AHEAD = 24; // world units ahead the camera looks, along the track
 const GRAVITY = 30; // units/sec² for the jump arc (physics-inspired hop)
 
 // ── tiny canvas-texture helpers (same approach as the car scene) ─────────────
@@ -397,6 +399,8 @@ export default class ThreeSubwayScene {
     this.locked = true; // countdown / feedback → jog instead of sprint
     this.stopped = false; // hard stop while answer feedback shows
     this.parked = false; // true while stopped in-lane at a checkpoint, answering
+    this.manualThrottle = 1; // player-controlled run speed while free-running (↑/↓ keys)
+    this.throttleInput = 0; // -1 (↓ held) / 0 / 1 (↑ held) — see setThrottleInput()
     this.pendingBoost = false; // sprint burst after a correct answer
     this.speed = 0; // 0..1.5
     this.prevSpeed = 0;
@@ -439,6 +443,18 @@ export default class ThreeSubwayScene {
     this.camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1200);
     this.baseFov = 60;
 
+    // The real, fixed, closed-loop circuit — see trackPath.js. distTraveled is
+    // the runner's arc-length position along it (keeps counting up;
+    // sampleTrack wraps it into a lap fraction), lateralOffset is how far
+    // across the track (steering) it currently sits.
+    const { curve, totalLength } = buildTrackCurve(TRACK_RADIUS);
+    this.curve = curve;
+    this.totalLength = totalLength;
+    this.distTraveled = 0;
+    this.lateralOffset = this.laneX(this.currentLane);
+    this.camPos = new THREE.Vector3();
+    this.camLookAt = new THREE.Vector3();
+
     this.buildLights();
     this.buildWorld();
     this.buildCharacter();
@@ -463,6 +479,11 @@ export default class ThreeSubwayScene {
 
   buildLights() {
     this.scene.add(new THREE.HemisphereLight(0xdcecff, 0x6b6152, 1.0));
+    // The sun (and its shadow frustum) and its sky-disc sprite are pure
+    // atmosphere, not tied to the track's shape — since the runner now really
+    // travels the full loop (not just a few lanes near the origin), both are
+    // re-centred on the runner every frame in update() so the shadow always
+    // lands under it and the sun stays in a consistent spot in the sky.
     const sun = new THREE.DirectionalLight(0xfff1d4, 2.1);
     sun.position.set(38, 62, 24); // morning sun, front-right → readable faces + short shadow
     sun.castShadow = true;
@@ -478,9 +499,9 @@ export default class ThreeSubwayScene {
     this.scene.add(sun.target);
     this.sun = sun;
 
-    const disc = sunSprite();
-    disc.position.set(70, 40, -360);
-    this.scene.add(disc);
+    this.sunDisc = sunSprite();
+    this.sunDisc.position.set(70, 40, -360);
+    this.scene.add(this.sunDisc);
 
     // gentle fill from behind the camera so the runner's back isn't a silhouette
     const fill = new THREE.DirectionalLight(0xcfe4ff, 0.55);
@@ -489,63 +510,61 @@ export default class ThreeSubwayScene {
   }
 
   buildWorld() {
-    this.movers = []; // pooled scenery that scrolls toward the camera
-    this.scrollMats = []; // {tex, axis, sign, perUnit} texture-scrolled surfaces
     const halfBed = this.bedW / 2;
-
-    const addScrollPlane = (tex, w, x, y, tilesAlong, sign = 1, axis = 'y') => {
-      const geo = new THREE.PlaneGeometry(w, TRACK_LEN);
-      const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(x, y, -TRACK_LEN / 2 + 30);
-      mesh.receiveShadow = true;
-      tex.repeat.set(tex.repeat.x || 1, tilesAlong);
-      this.scene.add(mesh);
-      this.scrollMats.push({ tex, axis, sign, perUnit: tilesAlong / TRACK_LEN });
-      return mesh;
-    };
+    const { curve, totalLength } = this;
+    this.trackGroup = new THREE.Group(); // everything tied to the circuit's own shape
+    this.scene.add(this.trackGroup);
 
     // ballast track bed with flying sleepers — sleepers centred on the real
     // lane positions (so every track lines up under its rails, not just the mid)
     const laneFracs = [];
     for (let l = 0; l < this.laneCount; l++) laneFracs.push(this.laneX(l) / this.bedW + 0.5);
-    addScrollPlane(ballastTexture(laneFracs, 2.0 / this.bedW), this.bedW, 0, 0, TRACK_LEN / 8);
+    this.trackGroup.add(buildRibbon({
+      curve, totalLength, width: this.bedW,
+      material: new THREE.MeshStandardMaterial({ map: ballastTexture(laneFracs, 2.0 / this.bedW), roughness: 1 }),
+      uAlongTilesPerUnit: 1 / 8,
+    }));
     // raised concrete platforms either side of the tracks
-    addScrollPlane(pavementTexture(), 9, -(halfBed + 4.5), 0.18, TRACK_LEN / 12);
-    addScrollPlane(pavementTexture(), 9, halfBed + 4.5, 0.18, TRACK_LEN / 12);
+    [-1, 1].forEach((s) => this.trackGroup.add(buildRibbon({
+      curve, totalLength, width: 9, y: 0.18, offset: s * (halfBed + 4.5),
+      material: new THREE.MeshStandardMaterial({ map: pavementTexture(), roughness: 1 }),
+      uAlongTilesPerUnit: 1 / 12,
+    })));
 
     // platform side walls (the drop from platform down to the track bed)
-    [-1, 1].forEach((s) => {
-      const wall = new THREE.Mesh(
-        new THREE.BoxGeometry(0.4, 0.36, TRACK_LEN),
-        new THREE.MeshStandardMaterial({ color: 0x8c9099, roughness: 0.9 }),
-      );
-      wall.position.set(s * halfBed, 0.0, -TRACK_LEN / 2 + 30);
-      wall.receiveShadow = true;
-      this.scene.add(wall);
-    });
+    [-1, 1].forEach((s) => this.trackGroup.add(buildWall({
+      curve, totalLength, height: 0.36, y0: 0, offset: s * halfBed,
+      material: new THREE.MeshStandardMaterial({ color: 0x8c9099, roughness: 0.9 }),
+    })));
 
-    // far city ground so the horizon isn't empty behind the buildings
+    // far city ground so the horizon isn't empty behind the buildings — one
+    // big static disc under the whole circuit, not tied to its shape
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(1600, TRACK_LEN + 400),
+      new THREE.CircleGeometry(1000, 48),
       new THREE.MeshStandardMaterial({ color: 0x7d8a76, roughness: 1 }),
     );
     ground.rotation.x = -Math.PI / 2;
-    ground.position.set(0, -0.25, -TRACK_LEN / 2 + 60);
+    ground.position.y = -0.25;
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // continuous steel rails (uniform along Z, so they need no scrolling)
+    // continuous steel rails, following the curve
     this.buildRails();
-    // overhead catenary wires running the length of the line
+    // overhead catenary wires, following the curve
     this.buildCatenary();
 
-    // distant skyline haze behind the near buildings
+    // distant skyline haze — a full static ring around the whole circuit (not
+    // tied to the runner), so there's always a backdrop no matter which way
+    // the track is currently curving; fades out via fog at the far edge.
     const hazeMat = new THREE.MeshBasicMaterial({ color: 0x9fb2c8, fog: true });
-    for (let i = 0; i < 10; i++) {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(40 + (i % 4) * 18, 60 + (i % 5) * 40, 12), hazeMat);
-      b.position.set(-360 + i * 80, b.geometry.parameters.height / 2 - 6, -460 - (i % 3) * 40);
+    const HAZE_COUNT = 22;
+    const HAZE_RING_R = TRACK_RADIUS + 340;
+    for (let i = 0; i < HAZE_COUNT; i++) {
+      const a = (i / HAZE_COUNT) * Math.PI * 2;
+      const h = 60 + (i % 5) * 40;
+      const b = new THREE.Mesh(new THREE.BoxGeometry(40 + (i % 4) * 18, h, 12), hazeMat);
+      b.position.set(Math.sin(a) * HAZE_RING_R, h / 2 - 6, -Math.cos(a) * HAZE_RING_R);
+      b.rotation.y = a;
       this.scene.add(b);
     }
 
@@ -591,77 +610,71 @@ export default class ThreeSubwayScene {
     ];
     this.awningTexes = [awningTexture('#e11d48', '#fff5f5'), awningTexture('#0e7490', '#f0fdff'), awningTexture('#b45309', '#fff7ed')];
 
-    // ── pooled, scrolling scenery ──
+    // ── scenery placed once, statically, around the fixed loop (spacing
+    // values are the same ones the old scrolling version used, just now
+    // converted into a count around the real lap length) ──
     // skyline of buildings marching down both sides
-    this.spawnRow((i) => this.makeBuilding(i, -1), 9, 80, { offset: 10 });
-    this.spawnRow((i) => this.makeBuilding(i, 1), 9, 80, { offset: 52 });
+    this.spawnAround((i) => this.makeBuilding(i, -1), 80);
+    this.spawnAround((i) => this.makeBuilding(i, 1), 80, { startT: 0.02 });
     // railway stations (big set piece) alternating sides
-    this.spawnRow((i) => this.makeStation(i % 2 === 0 ? 1 : -1), 2, 360, { offset: 120 });
+    this.spawnAround((i) => this.makeStation(i % 2 === 0 ? 1 : -1), 360);
     // food stalls on the platforms
-    this.spawnRow((i) => this.makeFoodStall(i % 2 === 0 ? -1 : 1), 3, 240, { offset: 80 });
+    this.spawnAround((i) => this.makeFoodStall(i % 2 === 0 ? -1 : 1), 240, { startT: 0.01 });
     // overpass bridges the runner sprints under
-    this.spawnRow(() => this.makeBridge(), 2, 360, { offset: 220 });
+    this.spawnAround(() => this.makeBridge(), 360, { startT: 0.15 });
     // signal gantries spanning the tracks
-    this.spawnRow(() => this.makeGantry(), 8, 90, { offset: 30 });
-    // street lamps + trees + benches lining the platforms
-    this.spawnRow(() => this.makeLamp(-1), 8, 90, { offset: 66 });
-    this.spawnRow(() => this.makeLamp(1), 8, 90, { offset: 24 });
-    // lusher treeline: a dense near row + a taller row set further back, both sides
-    this.spawnRow(() => this.makeTree(-1), 11, 60, { offset: 18 });
-    this.spawnRow(() => this.makeTree(1), 11, 60, { offset: 48 });
-    this.spawnRow(() => this.makeTree(-1, true), 8, 84, { offset: 74 });
-    this.spawnRow(() => this.makeTree(1, true), 8, 84, { offset: 36 });
-    this.spawnRow(() => this.makeBench(-1), 4, 180, { offset: 150 });
+    this.spawnAround(() => this.makeGantry(), 90);
+    // street lamps + benches lining the platforms
+    this.spawnAround(() => this.makeLamp(-1), 90, { startT: 0.005 });
+    this.spawnAround(() => this.makeLamp(1), 90, { startT: 0.015 });
+    this.spawnAround(() => this.makeBench(-1), 180, { startT: 0.03 });
     // trains rushing past on the outer side tracks
-    this.spawnRow((i) => this.makeTrain(-1, i), 2, 300, { offset: 60 });
-    this.spawnRow((i) => this.makeTrain(1, i), 2, 300, { offset: 210 });
+    this.spawnAround((i) => this.makeTrain(-1, i), 300);
+    this.spawnAround((i) => this.makeTrain(1, i), 300, { startT: 0.1 });
     // signal masts with red/green aspects
-    this.spawnRow(() => this.makeSignal(1), 3, 240, { offset: 130 });
+    this.spawnAround(() => this.makeSignal(1), 240, { startT: 0.05 });
 
-    // upgrade the procedural cone-trees to the GLB forest trees, if they load
-    this.treeMovers = this.movers.filter((m) => m.obj.userData.isTree);
+    // lusher treeline: a dense near row + a taller row set further back, both
+    // sides — kept as {obj} refs so loadTrees() can upgrade them to GLB trees
+    this.treeMovers = [
+      ...this.spawnAround(() => this.makeTree(-1), 60),
+      ...this.spawnAround(() => this.makeTree(1), 60, { startT: 0.004 }),
+      ...this.spawnAround(() => this.makeTree(-1, true), 84, { startT: 0.008 }),
+      ...this.spawnAround(() => this.makeTree(1, true), 84, { startT: 0.012 }),
+    ].map((obj) => ({ obj }));
     this.loadTrees();
   }
 
-  // Lay `count` copies of a scenery item spaced `spacing` apart; they recycle
-  // over SPAN-independent runs (span = count*spacing keeps them evenly spread).
-  spawnRow(make, count, spacing, { offset = 0 } = {}) {
-    const span = count * spacing;
-    for (let i = 0; i < count; i++) {
-      const obj = make(i);
-      obj.position.z = -(offset + i * spacing) - 20;
-      this.scene.add(obj);
-      this.movers.push({ obj, span });
-    }
+  // Lay copies of a scenery item evenly around the fixed loop, `spacing`
+  // world units apart (matches the old scrolling version's density, just
+  // placed once instead of recycled). Returns the placed objects.
+  spawnAround(make, spacing, { startT = 0 } = {}) {
+    const count = Math.max(1, Math.round(this.totalLength / spacing));
+    return placeAlongTrack({
+      curve: this.curve, totalLength: this.totalLength, group: this.trackGroup,
+      make, count, startT,
+    });
   }
 
   buildRails() {
     const railMat = new THREE.MeshStandardMaterial({ color: 0xb7bec8, roughness: 0.35, metalness: 0.85 });
     const gauge = 1.5;
-    this.rails = [];
+    const { curve, totalLength } = this;
     for (let l = 0; l < this.laneCount; l++) {
       const cx = this.laneX(l);
-      [-1, 1].forEach((s) => {
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, TRACK_LEN), railMat);
-        rail.position.set(cx + s * (gauge / 2), 0.13, -TRACK_LEN / 2 + 30);
-        this.scene.add(rail);
-        this.rails.push(rail);
-      });
+      [-1, 1].forEach((s) => this.trackGroup.add(buildRibbon({
+        curve, totalLength, width: 0.12, y: 0.13, offset: cx + s * (gauge / 2), material: railMat,
+      })));
     }
   }
 
   buildCatenary() {
     const wireMat = new THREE.MeshBasicMaterial({ color: 0x2a2f38, fog: true });
-    [-1, 1].forEach((s) => {
-      const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, TRACK_LEN, 5), wireMat);
-      wire.rotation.x = Math.PI / 2;
-      wire.position.set(s * (this.bedW / 4), 7.4, -TRACK_LEN / 2 + 30);
-      this.scene.add(wire);
-    });
-    const feeder = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, TRACK_LEN, 5), wireMat);
-    feeder.rotation.x = Math.PI / 2;
-    feeder.position.set(0, 8.1, -TRACK_LEN / 2 + 30);
-    this.scene.add(feeder);
+    const { curve, totalLength } = this;
+    [-1, 1].forEach((s) => this.trackGroup.add(buildWall({
+      curve, totalLength, height: 0.05, y0: 7.38, offset: s * (this.bedW / 4), material: wireMat,
+    })));
+    this.trackGroup.add(buildWall({ curve, totalLength, height: 0.04, y0: 8.08, offset: 0, material: wireMat }));
   }
 
   // ── scenery factories ──────────────────────────────────────────────────────
@@ -1287,7 +1300,9 @@ export default class ThreeSubwayScene {
     this.body = body;
     this.buildAccessories(root);
 
-    root.position.set(this.laneX(this.currentLane), 0, 0);
+    const { point, tangent, right } = sampleTrack(this.curve, 0);
+    root.position.set(point.x + right.x * this.lateralOffset, 0, point.z + right.z * this.lateralOffset);
+    root.rotation.y = headingAngle(tangent);
     this.character = root;
     this.scene.add(root);
   }
@@ -1417,9 +1432,9 @@ export default class ThreeSubwayScene {
       holder.userData.swayPhase = Math.random() * Math.PI * 2;
       holder.userData.swayAmp = 0.018 + Math.random() * 0.022; // ~1–2.3°
       holder.userData.swaySpeed = 0.5 + Math.random() * 0.5;
-      this.scene.remove(m.obj);
+      this.trackGroup.remove(m.obj);
       if (!m.obj.userData.glb) disposeObj(m.obj); // safe: only procedural cones
-      this.scene.add(holder);
+      this.trackGroup.add(holder);
       m.obj = holder;
     });
   }
@@ -1460,9 +1475,9 @@ export default class ThreeSubwayScene {
       act.play();
       act.time = Math.random() * (clip.duration || 1); // desync
       this.treeMixers.push(mixer);
-      this.scene.remove(m.obj);
+      this.trackGroup.remove(m.obj);
       if (!m.obj.userData.glb) disposeObj(m.obj);
-      this.scene.add(holder);
+      this.trackGroup.add(holder);
       m.obj = holder;
     });
   }
@@ -1608,23 +1623,24 @@ export default class ThreeSubwayScene {
     this.elapsed += dt;
 
     // speed: full stop during feedback or while stopped in-lane at a
-    // checkpoint, jog in countdown, sprint burst on relaunch
+    // checkpoint, jog in countdown, sprint burst on relaunch, otherwise the
+    // player's own ↑/↓ throttle while free-running
     const boosting = this.elapsed < this.boostUntil;
     const braking = this.stopped || this.parked;
-    this.speedTarget = braking ? 0 : boosting ? 1.5 : this.locked ? 0.32 : 1;
+    if (!braking && !this.locked) {
+      this.manualThrottle = THREE.MathUtils.clamp(this.manualThrottle + this.throttleInput * dt * 0.8, 0.2, 1.6);
+    }
+    this.speedTarget = braking ? 0 : boosting ? 1.5 : this.locked ? 0.32 : this.manualThrottle;
     this.speed += (this.speedTarget - this.speed) * Math.min(1, dt * (braking ? 7 : 3));
     if (braking && this.speed < 0.01) this.speed = 0;
     const dist = this.speed * WORLD_SPEED * dt;
 
-    // scroll every textured surface (ballast, platforms)
-    for (const s of this.scrollMats) {
-      s.tex.offset[s.axis] += s.sign * dist * s.perUnit;
-    }
-    // scroll pooled scenery and recycle behind the camera
-    for (const m of this.movers) {
-      m.obj.position.z += dist;
-      if (m.obj.position.z > 18) m.obj.position.z -= m.span;
-    }
+    // advance along the fixed circuit (sampleTrack wraps this into a lap
+    // fraction automatically, so the runner just keeps lapping)
+    this.distTraveled += dist;
+    const { point, tangent, right } = sampleTrack(this.curve, this.distTraveled / this.totalLength);
+    const heading = headingAngle(tangent);
+
     // ambient wind: gently tilt each GLB tree from its base on its own phase.
     // (treeMixers stays for any pre-animated GLB that gets re-added later.)
     this.windT = (this.windT || 0) + dt;
@@ -1723,16 +1739,33 @@ export default class ThreeSubwayScene {
       this.body.rotation.x = -(0.06 + this.speed * 0.12) + stumbleLean;
     }
 
-    // steer toward the target lane with a lateral lean (body roll)
-    const targetX = this.laneX(this.currentLane);
-    const dx = targetX - this.character.position.x;
-    this.character.position.x += dx * Math.min(1, dt * 9);
-    this.character.rotation.z = THREE.MathUtils.clamp(-dx * 0.22, -0.4, 0.4);
-    this.character.rotation.y = THREE.MathUtils.clamp(dx * 0.12, -0.25, 0.25);
-    this.character.position.y = this.jumpY;
+    // steer across the track (lateral offset from centreline) toward the
+    // current lane, with body roll + yaw layered on top of the track's own
+    // heading — same lane-steering whether running or stopped at a
+    // checkpoint, so the runner brakes to a stop ON the track (in whichever
+    // lane it's in) instead of stepping off it.
+    const targetLateral = this.laneX(this.currentLane);
+    const dLat = targetLateral - this.lateralOffset;
+    this.lateralOffset += dLat * Math.min(1, dt * 9);
+
+    this.character.position.set(
+      point.x + right.x * this.lateralOffset,
+      this.jumpY,
+      point.z + right.z * this.lateralOffset,
+    );
+    this.character.rotation.z = THREE.MathUtils.clamp(-dLat * 0.22, -0.4, 0.4);
+    this.character.rotation.y = heading + THREE.MathUtils.clamp(dLat * 0.12, -0.25, 0.25);
+
+    // keep the sun (+ its shadow frustum) and sky disc centred on wherever
+    // the runner currently is on the loop — pure atmosphere, not tied to the
+    // track's actual shape, but the shadow frustum is a fixed-size box that
+    // has to stay near the runner to catch its shadow at all.
+    this.sun.position.set(this.character.position.x + 38, 62, this.character.position.z + 24);
+    this.sun.target.position.copy(this.character.position);
+    this.sunDisc.position.set(this.character.position.x + 70, 40, this.character.position.z - 360);
 
     // head glance toward the lane being entered (procedural head only)
-    if (!this.useModel && this.head) this.head.rotation.y = THREE.MathUtils.clamp(-dx * 0.12, -0.4, 0.4);
+    if (!this.useModel && this.head) this.head.rotation.y = THREE.MathUtils.clamp(-dLat * 0.12, -0.4, 0.4);
 
     // ── effects ──
     // sprint flames (boost / accessories)
@@ -1781,24 +1814,51 @@ export default class ThreeSubwayScene {
     if (this.hoverBoard) this.hoverBoard.position.y = 0.12 + Math.sin(this.elapsed * 6) * 0.03;
     if (this.namePlate) this.namePlate.position.y = 2.95 + Math.sin(this.elapsed * 2) * 0.03;
 
-    // ── camera: third-person chase with shake + speed FOV ──
+    // ── camera: chase the runner ALONG THE CURVE (sampled slightly
+    // behind/ahead, not a fixed world-space offset), so it stays on the
+    // track through bends instead of cutting across. FOV widens with speed,
+    // shake decays; both camera position and look-at ease toward their
+    // targets so bends don't whip the view around.
     this.shake = Math.max(0, this.shake - dt * 2.2);
     const shx = (Math.random() - 0.5) * this.shake * 0.5;
     const shy = (Math.random() - 0.5) * this.shake * 0.35;
-    const camX = this.character.position.x * 0.55;
-    this.camera.position.set(camX, 4.5 + this.jumpY * 0.25, 7.7);
-    this.camera.lookAt(this.character.position.x * 0.8, 1.4 + this.jumpY * 0.4, -26);
+    const lateralBias = this.lateralOffset * 0.55;
+    const behind = sampleTrack(this.curve, (this.distTraveled - CAM_BEHIND) / this.totalLength);
+    const ahead = sampleTrack(this.curve, (this.distTraveled + CAM_AHEAD) / this.totalLength);
+    const camTarget = new THREE.Vector3(
+      behind.point.x + behind.right.x * lateralBias,
+      4.5 + this.jumpY * 0.25,
+      behind.point.z + behind.right.z * lateralBias,
+    );
+    const lookTarget = new THREE.Vector3(
+      ahead.point.x + ahead.right.x * lateralBias * 0.85,
+      1.4 + this.jumpY * 0.4,
+      ahead.point.z + ahead.right.z * lateralBias * 0.85,
+    );
+    if (this._camInit) {
+      this.camPos.lerp(camTarget, Math.min(1, dt * 5));
+      this.camLookAt.lerp(lookTarget, Math.min(1, dt * 5));
+    } else {
+      this.camPos.copy(camTarget);
+      this.camLookAt.copy(lookTarget);
+      this._camInit = true;
+    }
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(this.camLookAt);
     const fovTarget = this.baseFov + this.speed * 6;
     this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, dt * 4);
     this.camera.updateProjectionMatrix();
 
-    // project each lane at the runner's row (pre-shake) so the HTML answer
-    // bubbles pin exactly over their track — identical contract to the car scene
+    // project each lane (at the runner's own point on the track) to screen —
+    // (pre-shake, so the overlay cards pinned to the lanes don't jitter) and
+    // report it; identical contract to the car scene
     if (this.onLaneLayout) {
       const v = new THREE.Vector3();
       const xs = [];
       for (let i = 0; i < this.laneCount; i++) {
-        v.set(this.laneX(i), 0.2, 0).project(this.camera);
+        const lx = point.x + right.x * this.laneX(i);
+        const lz = point.z + right.z * this.laneX(i);
+        v.set(lx, 0.2, lz).project(this.camera);
         xs.push((v.x + 1) / 2);
       }
       if (!this.lastLaneXs || xs.some((x, i) => Math.abs(x - this.lastLaneXs[i]) > 0.003)) {
@@ -1828,6 +1888,13 @@ export default class ThreeSubwayScene {
     this.locked = false;
     this.stopped = false;
     this.flamesOn = false;
+    this.manualThrottle = 1;
+  }
+
+  // ↑/↓ throttle control while free-running (ignored while braking/locked —
+  // see update()). dir: 1 = speed up, -1 = slow down, 0 = coast.
+  setThrottleInput(dir) {
+    this.throttleInput = THREE.MathUtils.clamp(dir, -1, 1);
   }
 
   applyQuestion() {
@@ -1880,6 +1947,7 @@ export default class ThreeSubwayScene {
     this.parked = false;
     this.locked = false;
     this.currentLane = Math.floor(this.laneCount / 2);
+    this.manualThrottle = 1;
   }
 
   resetSigns() {
