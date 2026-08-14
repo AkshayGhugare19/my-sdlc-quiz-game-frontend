@@ -10,11 +10,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // (e.g. car-apex.glb) for that one design, or public/models/car.glb to cover
 // every design, and it's picked up automatically — same "async load, graceful
 // fallback to the procedural version" pattern the runner/trees already use in
-// ThreeSubwayScene.js. It only ever replaces the outer body shell (chassis/
-// cabin/bumpers/skirts) — wheels, flames/smoke, wing + name plate, and the
-// driver figure stay exactly where they are, in the same car-local
-// coordinates, so nothing else needs to know or care which body is in use.
-// See public/models/CREDITS.txt.
+// ThreeSubwayScene.js. It's a FULL REPLACEMENT, not a combination — it hides
+// the entire procedural car (body, wheels + axles, driver figure), so it
+// should include its own wheels. The tail light + name plate stay on top of
+// it either way, in the same car-local coordinates, so garage-accessory and
+// answer-feedback effects (flames/smoke/wing) keep working regardless of
+// which body is in use. See public/models/CREDITS.txt.
+//
+// 👉 If a real model ever looks like it's driving backward (or sideways),
+// change this. Source tools don't agree on which axis is "forward" (Blender
+// exports ≈ +Y, others vary), so an as-authored model is a coin flip on
+// facing the right way once dropped into our -Z-is-forward convention. Try
+// 0 first, then Math.PI, then ±Math.PI/2 — those four cover every case.
+const REAL_MODEL_YAW = Math.PI;
 const modelCache = {};
 function loadRealCarModel(carDesignId) {
   const key = carDesignId || 'default';
@@ -35,13 +43,18 @@ function loadRealCarModel(carDesignId) {
   return modelCache[key];
 }
 
-// Swaps a loaded real model in as the car's body shell, once/if it loads.
-// Fires and forgets — buildCar() calls this without awaiting it, exactly like
-// loadRunnerModel()/loadTrees() do, so the procedural car renders instantly
-// and the real one (if any) pops in a moment later.
-function loadRealCarBody(car, cfg, bodyMeshes, chLen) {
+// Swaps a loaded real model in as a full REPLACEMENT for the procedural car —
+// not a combination of the two. Fires and forgets — buildCar() calls this
+// without awaiting it, exactly like loadRunnerModel()/loadTrees() do, so the
+// procedural car renders instantly and the real one (if any) pops in a
+// moment later, hiding every procedural part passed in `hideParts` (body
+// shell, wheels+axles, driver figure — see buildCar()) so nothing procedural
+// is left showing through/alongside it (no double wheels, no floating
+// driver). If no model is found at either URL, everything in `hideParts`
+// stays visible and the procedural car is simply what's used.
+function loadRealCarBody(car, cfg, chLen, hideParts) {
   loadRealCarModel(cfg.id).then((scene) => {
-    if (!scene) return; // no file at either URL — procedural body stays
+    if (!scene) return; // no file at either URL — procedural car stays, unchanged
     const model = scene.clone(true);
     model.traverse((o) => {
       if (o.isMesh) {
@@ -49,6 +62,14 @@ function loadRealCarBody(car, cfg, bodyMeshes, chLen) {
         o.receiveShadow = true;
       }
     });
+    // Correct the model's forward axis to match ours (local -Z = front — see
+    // headingAngle() in trackPath.js) BEFORE any bounding-box math below, so
+    // the box is computed on the final orientation. Every DCC tool/exporter
+    // picks its own "forward" (Blender ≈ +Y, others vary), so an as-exported
+    // model is basically a coin flip on facing the right way; REAL_MODEL_YAW
+    // is the fix. Applied before scaling/centering so it's correct for any
+    // of the four practical values, not just 180°.
+    model.rotation.y = REAL_MODEL_YAW;
     // normalise: fit its length (Z) to the procedural chassis length, centre
     // it, and drop it so its lowest point sits on the ground (y=0)
     const box = new THREE.Box3().setFromObject(model);
@@ -61,7 +82,7 @@ function loadRealCarBody(car, cfg, bodyMeshes, chLen) {
     model.position.x -= center.x;
     model.position.z -= center.z;
     model.position.y -= box2.min.y;
-    bodyMeshes.forEach((m) => (m.visible = false)); // hide the procedural shell; keep it (cheap, no rebuild needed if this ever needs reverting)
+    hideParts.forEach((m) => { if (m) m.visible = false; }); // keep them around (cheap, no rebuild needed if this ever needs reverting), just hidden
     car.add(model);
   });
 }
@@ -164,67 +185,96 @@ function buildBody(car, cfg, parts) {
   const trimMat = cfg.chrome ? chromeMat : darkMat;
   const y0 = 0.28 + cfg.rideHeight; // ground clearance
   const w = cfg.width;
-  const chH = 0.46 - cfg.hoodDrop * 0.3; // chassis (body) height
-  const chZ = -0.15; // chassis centre, front (-Z) to rear (+Z)
+  const chH = 0.46 - cfg.hoodDrop * 0.3; // main body (cabin+trunk) height
+  const chZ = -0.15; // whole-car centre, front (-Z) to rear (+Z)
   const chLen = 3.7;
-  const chTop = y0 + chH; // top-of-body line the whole silhouette reads off
+  const chTop = y0 + chH; // top-of-body line the cabin/trunk silhouette reads off
+  const frontZ = chZ - chLen / 2;
+  const rearZ = chZ + chLen / 2;
 
-  // ── one continuous chassis box = the whole hood-to-trunk body line — a
-  // single unbroken shape reads as "a car" far more reliably than several
-  // stacked/offset boxes, which is what low-poly car models actually do ──
-  const chassis = new THREE.Mesh(new THREE.BoxGeometry(w, chH, chLen), bodyMat);
-  chassis.position.set(0, y0 + chH / 2, chZ);
+  // ── nose wedge: the hood sits distinctly LOWER and NARROWER than the
+  // cabin/trunk body, flush against it with no gap — so the silhouette
+  // itself unambiguously reads "pointed/low nose vs tall flat trunk" from
+  // any angle, instead of relying on small details (headlight colour) alone
+  // to tell front from back.
+  const noseLen = 1.0;
+  const noseH = chH * 0.6;
+  const noseBackZ = frontZ + noseLen;
+  const mainLen = rearZ - noseBackZ;
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(w, chH, mainLen), bodyMat);
+  chassis.position.set(0, y0 + chH / 2, (noseBackZ + rearZ) / 2);
   chassis.castShadow = true;
   car.add(chassis);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(w * 0.82, noseH, noseLen), bodyMat);
+  nose.position.set(0, y0 + noseH / 2, (frontZ + noseBackZ) / 2);
+  nose.castShadow = true;
+  car.add(nose);
 
   // cockpit wall — a low rim around the open driver's bay, sitting on the
-  // chassis roughly at its middle (hood ahead of it, trunk behind it)
+  // main body roughly at its front (hood wedge ahead of it, trunk behind it)
   const rim = new THREE.Mesh(new THREE.BoxGeometry(w * 0.72, 0.18, 1.3), darkMat);
   rim.position.set(0, chTop + 0.09, -0.35);
   car.add(rim);
   const rimTop = chTop + 0.18;
 
-  // windshield, raked back over the hood (open-top — the driver stays visible
-  // rising above the cockpit wall, same as before)
-  const windshield = new THREE.Mesh(new THREE.BoxGeometry(w * 0.62, 0.44, 0.06), glassMat);
-  windshield.position.set(0, chTop + 0.33, -0.98);
+  // windshield, raked back right where the hood meets the cabin (open-top —
+  // the driver stays visible rising above the cockpit wall, same as before)
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(w * 0.62, 0.5, 0.06), glassMat);
+  windshield.position.set(0, y0 + noseH + 0.2, noseBackZ + 0.02);
   windshield.rotation.x = 0.42;
   car.add(windshield);
 
   if (cfg.hoodScoop) {
-    const scoop = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.55), darkMat);
-    scoop.position.set(0, chTop + 0.06, -1.35);
+    const scoop = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.5), darkMat);
+    scoop.position.set(0, y0 + noseH + 0.05, (frontZ + noseBackZ) / 2);
     car.add(scoop);
   }
 
-  // front + rear bumpers, grille, headlights, tail light — trim at the tips
-  // of the chassis, no separate hood/trunk geometry needed
-  const frontZ = chZ - chLen / 2;
-  const rearZ = chZ + chLen / 2;
-  const frontBumper = new THREE.Mesh(new THREE.BoxGeometry(w * 1.0, chH * 0.5, 0.28), trimMat);
-  frontBumper.position.set(0, y0 + chH * 0.28, frontZ - 0.1);
+  // front bumper, grille + a wide light bar (unmistakably "a car's face" —
+  // big and bright, not a detail you have to look for) mounted on the nose
+  const frontBumper = new THREE.Mesh(new THREE.BoxGeometry(w * 0.86, noseH * 0.55, 0.24), trimMat);
+  frontBumper.position.set(0, y0 + noseH * 0.3, frontZ + 0.02);
   car.add(frontBumper);
-  const grille = new THREE.Mesh(new THREE.BoxGeometry(w * 0.5, chH * 0.4, 0.06), darkMat);
-  grille.position.set(0, y0 + chH * 0.4, frontZ - 0.22);
+  const grille = new THREE.Mesh(new THREE.BoxGeometry(w * 0.5, noseH * 0.45, 0.05), darkMat);
+  grille.position.set(0, y0 + noseH * 0.5, frontZ - 0.02);
   car.add(grille);
   const headlights = [-1, 1].map((s) => {
     const light = new THREE.Mesh(
-      new THREE.BoxGeometry(0.18, 0.1, 0.06),
-      new THREE.MeshStandardMaterial({ color: 0xfff8e0, emissive: 0xfff2b8, emissiveIntensity: 0.9 }),
+      new THREE.BoxGeometry(w * 0.24, noseH * 0.4, 0.07),
+      new THREE.MeshStandardMaterial({ color: 0xfff8e0, emissive: 0xfff2b8, emissiveIntensity: 1.1 }),
     );
-    light.position.set(s * w * 0.36, y0 + chH * 0.55, frontZ - 0.22);
+    light.position.set(s * w * 0.35, y0 + noseH * 0.62, frontZ - 0.02);
     car.add(light);
     return light;
   });
+
+  // rear windshield, sloping the OPPOSITE way from the front one (down toward
+  // the trunk) so the cabin reads as a proper enclosed greenhouse with a
+  // front AND a back window — not just a hood on one end and a flat deck.
+  const rearWindshield = new THREE.Mesh(new THREE.BoxGeometry(w * 0.6, 0.4, 0.06), glassMat);
+  rearWindshield.position.set(0, chTop - 0.02, 0.32);
+  rearWindshield.rotation.x = -0.38;
+  car.add(rearWindshield);
+
+  // rear bumper + a full-width light BAR (not a small dot — big, bright, and
+  // unmistakably "the back of a car" even at a glance/distance) + a pair of
+  // exhaust tips — the same universal cues real cars use, so which end is
+  // the rear never has to rely on reading the name plate to tell.
   const rearBumper = new THREE.Mesh(new THREE.BoxGeometry(w * 1.0, chH * 0.5, 0.26), trimMat);
   rearBumper.position.set(0, y0 + chH * 0.28, rearZ + 0.1);
   car.add(rearBumper);
   const tail = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, 0.09, 0.06),
-    new THREE.MeshStandardMaterial({ color: 0x550b0b, emissive: 0xff2222, emissiveIntensity: 1.4 }),
+    new THREE.BoxGeometry(w * 0.8, 0.1, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0x550b0b, emissive: 0xff2222, emissiveIntensity: 1.6 }),
   );
-  tail.position.set(0, y0 + chH * 0.6, rearZ + 0.11);
+  tail.position.set(0, y0 + chH * 0.62, rearZ + 0.12);
   car.add(tail);
+  [-1, 1].forEach((s) => {
+    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.2, 10), chromeMat);
+    exhaust.rotation.x = Math.PI / 2;
+    exhaust.position.set(s * w * 0.3, y0 + chH * 0.12, rearZ + 0.2);
+    car.add(exhaust);
+  });
   parts.tailLight = tail;
 
   // side skirts (accent stripe) along the full length
@@ -307,7 +357,6 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
   };
 
   const { bodyMat, darkMat, y0, chLen, bodyMeshes, windshield, headlights } = buildBody(car, cfg, parts);
-  loadRealCarBody(car, cfg, bodyMeshes, chLen); // async — swaps in a real model if one's been dropped in public/models/
   parts.windshield = windshield; // hidden in cockpit view so it doesn't tint out the driver's own view
   parts.headlights = headlights; // toggled on/off via the HUD's headlight button
   parts.eyePoint = { y: y0 + 1.05, z: -0.28 }; // cockpit-camera eye position, car-local (driver head height)
@@ -344,6 +393,7 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
   const tyreMat = new THREE.MeshStandardMaterial({ color: 0x0c0e12, roughness: 0.95 });
   const rimMat = new THREE.MeshStandardMaterial({ color: 0x9aa3af, roughness: 0.3, metalness: 0.8 });
   const hw = cfg.width * 0.48; // track width stays just inside the body edge, not poking past it
+  const axles = [];
   [[-hw, -1.35], [hw, -1.35], [-hw, 1.05], [hw, 1.05]].forEach(([x, z]) => {
     const wheel = new THREE.Group();
     const tyre = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.4, 20), tyreMat);
@@ -368,7 +418,15 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
     const axle = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.08), darkMat);
     axle.position.set(x * 0.62, r, z);
     car.add(axle);
+    axles.push(axle);
   });
+
+  // Real model (if any) is a full replacement, not a combination — swap it in
+  // once/if it loads, hiding the ENTIRE procedural car (body shell, wheels +
+  // axles, driver figure) so nothing procedural doubles up alongside it (no
+  // duplicate wheels, no driver floating on a roof that isn't there). Tail
+  // light + name plate stay visible either way — see loadRealCarBody().
+  loadRealCarBody(car, cfg, chLen, [...bodyMeshes, ...parts.wheels, ...axles, ...parts.driverParts]);
 
   // under-glow, tinted to the design's own accent colour
   const glow = new THREE.Mesh(

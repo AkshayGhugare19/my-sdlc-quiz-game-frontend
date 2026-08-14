@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 // Pre-race prompt: pick which 3D game to answer the quiz in. Shown by Race.jsx
 // before any mission / course / tournament / quick race boots, so the very same
 // gameplay runs in either the Racing circuit or the Subway-Surfer track runner.
+// Same dark NFS-showroom look as CarPreview.jsx/Result.jsx, so the whole
+// pre-race → race → post-race flow reads as one continuous presentation.
 
 // A tiny procedural preview of the racing circuit.
 function RacingArt() {
@@ -86,7 +88,7 @@ const GAMES = [
     tagline: 'Steer a race car down a sunset circuit',
     chips: ['🏎️ Race car', '🛣️ Road & lanes', '🏁 Grand-prix vibe'],
     Art: RacingArt,
-    accent: '#e11d48',
+    accent: '#f43f5e',
   },
   {
     key: 'subway',
@@ -94,7 +96,7 @@ const GAMES = [
     tagline: 'Sprint the train tracks through the city',
     chips: ['🏃 Track runner', '🚉 Stations & trains', '🌆 City & bridges'],
     Art: SubwayArt,
-    accent: '#14b8a6',
+    accent: '#22d3ee',
   },
 ];
 
@@ -107,21 +109,37 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 grid place-items-center p-4"
-        style={{ background: 'radial-gradient(900px 600px at 50% 0%, rgba(15,27,51,0.82), rgba(6,9,16,0.92))' }}
+        className="fixed inset-0 z-50 overflow-hidden grid place-items-center p-4"
+        style={{ background: 'radial-gradient(1200px 800px at 50% -10%, #131c33 0%, #05070d 55%, #020306 100%)' }}
       >
+        {/* faint carbon-fiber weave + sweeping light streak — same treatment as CarPreview/Result */}
+        <div
+          className="absolute inset-0 opacity-40 pointer-events-none"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(45deg, rgba(255,255,255,0.035) 0 2px, transparent 2px 6px), repeating-linear-gradient(-45deg, rgba(255,255,255,0.035) 0 2px, transparent 2px 6px)',
+          }}
+        />
+        <motion.div
+          className="absolute inset-y-0 w-1/3 pointer-events-none"
+          style={{ background: 'linear-gradient(100deg, transparent, rgba(103,232,249,0.08), transparent)' }}
+          initial={{ x: '-40vw' }}
+          animate={{ x: '140vw' }}
+          transition={{ duration: 3.2, repeat: Infinity, repeatDelay: 1.4, ease: 'easeInOut' }}
+        />
+
         <motion.div
           initial={{ scale: 0.94, y: 16, opacity: 0 }}
           animate={{ scale: 1, y: 0, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-          className="w-full max-w-3xl panel rounded-3xl p-6 md:p-8"
+          className="relative z-10 w-full max-w-3xl rounded-3xl p-6 md:p-8 border border-white/10 bg-black/30 backdrop-blur-sm shadow-2xl"
         >
           <div className="text-center mb-6">
-            <div className="inline-flex items-center gap-2 text-neon font-bold text-xs tracking-[0.25em] mb-2">
-              ⚡ BEFORE YOU START
+            <div className="inline-flex items-center gap-2 text-cyan-300 font-bold text-xs tracking-[0.3em] mb-2">
+              🏁 BEFORE YOU START 🏁
             </div>
-            <h1 className="text-2xl md:text-3xl font-extrabold text-royal">CHOOSE YOUR GAME</h1>
-            <p className="text-slate-500 font-medium mt-1">
+            <h1 className="text-2xl md:text-4xl font-black text-white uppercase tracking-wide">Choose Your Game</h1>
+            <p className="text-white/50 font-medium mt-1.5">
               Same quiz, your way — pick the world you want to play in.
             </p>
           </div>
@@ -136,28 +154,30 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
                   whileTap={{ scale: 0.98 }}
                   onClick={() => setSelected(key)}
                   onDoubleClick={() => onChoose(key)}
-                  className={`text-left rounded-3xl overflow-hidden border-2 transition bg-white ${
-                    isSel ? 'ring-4 ring-neon shadow-[0_0_28px_rgba(34,211,238,0.4)]' : 'border-transparent'
-                  }`}
-                  style={{ borderColor: isSel ? accent : 'transparent' }}
+                  className="text-left rounded-2xl overflow-hidden border-2 transition bg-black/40"
+                  style={{
+                    borderColor: isSel ? accent : 'rgba(255,255,255,0.12)',
+                    boxShadow: isSel ? `0 0 0 3px ${accent}33, 0 18px 34px rgba(2,8,20,0.5)` : '0 10px 24px rgba(2,8,20,0.35)',
+                  }}
                 >
-                  <div className="h-32 md:h-36 w-full">
+                  <div className="h-32 md:h-36 w-full relative">
                     <Art />
+                    <div className="absolute inset-0" style={{ boxShadow: 'inset 0 -18px 22px -6px rgba(0,0,0,0.35)' }} />
                   </div>
                   <div className="p-4">
                     <div className="flex items-center justify-between">
-                      <h2 className="text-lg font-extrabold text-[#0f1b33]">{name}</h2>
+                      <h2 className="text-lg font-extrabold text-white uppercase tracking-wide">{name}</h2>
                       <span
                         className="w-6 h-6 rounded-full grid place-items-center text-white text-sm font-black transition"
-                        style={{ background: isSel ? accent : '#cbd5e1' }}
+                        style={{ background: isSel ? accent : 'rgba(255,255,255,0.12)' }}
                       >
                         {isSel ? '✓' : ''}
                       </span>
                     </div>
-                    <p className="text-slate-500 text-sm font-medium mt-0.5">{tagline}</p>
+                    <p className="text-white/50 text-sm font-medium mt-0.5">{tagline}</p>
                     <div className="flex flex-wrap gap-1.5 mt-3">
                       {chips.map((c) => (
-                        <span key={c} className="text-[11px] font-semibold text-slate-600 bg-slate-100 rounded-full px-2.5 py-1">
+                        <span key={c} className="text-[11px] font-semibold text-white/70 bg-white/5 border border-white/10 rounded-full px-2.5 py-1">
                           {c}
                         </span>
                       ))}
@@ -168,10 +188,19 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
             })}
           </div>
 
-          <button onClick={() => onChoose(selected)} className="btn-primary w-full mt-6 text-lg">
-            START →
-          </button>
-          <p className="text-center text-slate-400 text-xs mt-3">
+          <motion.button
+            whileHover={{ scale: 1.015 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => onChoose(selected)}
+            className="w-full mt-6 rounded-2xl px-6 py-4 text-lg font-black uppercase tracking-wide text-[#031018]"
+            style={{
+              background: 'linear-gradient(135deg,#67e8f9,#22d3ee 55%,#0891b2)',
+              boxShadow: '0 0 0 1px rgba(103,232,249,0.5), 0 18px 40px rgba(34,211,238,0.35)',
+            }}
+          >
+            🏁 Start →
+          </motion.button>
+          <p className="text-center text-white/35 text-xs mt-3 font-medium">
             Tip: double-click a game to jump straight in.
           </p>
         </motion.div>

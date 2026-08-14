@@ -1,7 +1,53 @@
 CAR models for the Racing game (carBuilder.js, shared by ThreeRaceScene and the
-pre-race ThreeCarPreviewScene) — NOT YET SUPPLIED, this is just where to drop one:
+pre-race ThreeCarPreviewScene):
 
-  Drop a .glb here named EITHER:
+  ACTIVE: car.glb / car-apex.glb (identical) / car-titan.glb / car-ranger.glb /
+  car-classic.glb — user-supplied GLB assets. Verify their original source
+  license before shipping. No car-nimbus.glb was supplied, so 'nimbus' falls
+  back to the shared car.glb per the lookup order below.
+
+  COMPRESSED with gltf-transform (texture resize to 1024 + prune/dedup only).
+  The originals were 71MB/27MB/30MB/30MB and were freezing the page for
+  several seconds on load (a synchronous bounding-box pass over a 71MB mesh
+  blocks the main thread):
+    car.glb / car-apex.glb (identical)   71.2MB → 25.1MB
+    car-titan.glb                        27.4MB → 13.9MB
+    car-ranger.glb                        29.6MB → 8.7MB
+    car-classic.glb                      30.4MB → 13.2MB
+  Recipe used:
+    npx @gltf-transform/cli optimize IN OUT --texture-compress false --compress false --simplify false
+  ⚠ DO NOT use `--compress meshopt` (the `optimize` command's DEFAULT) or
+  `--simplify true` (which also triggers meshopt to store the simplified
+  mesh) for these — that applies EXT_meshopt_compression, which makes the
+  file *require* a Meshopt decoder to load at all. Our GLTFLoader in
+  carBuilder.js doesn't register one, so a meshopt-compressed file fails to
+  load *silently* — no console error — and just falls back to the
+  procedural car, which is exactly the bug that shipped here once already.
+  `--compress quantize` (KHR_mesh_quantization) is fine — same as the tree
+  models below — three.js's GLTFLoader supports it natively out of the box.
+  webp texture compression wasn't available either — the `sharp`/libvips
+  texture codec errored on this machine ("colourspace: parameter space not
+  set") — so textures stay PNG/JPEG at 1024px. If a future machine has a
+  working sharp/libvips install, add `--texture-compress webp` to shrink
+  these further (see the tree-model two-step recipe below as a fallback).
+
+  ⚠ KNOWN LIMITATION — cockpit/inside view (the HUD's 🎥 camera-toggle
+  button) looks dark/wrong with a real model loaded. Its camera sits at a
+  fixed eye point (car-local, tuned to the procedural body's own interior
+  proportions in carBuilder.js's `parts.eyePoint`) — for an arbitrary
+  real model that point can end up inside solid dashboard/seat geometry,
+  which renders as black. The outside/chase view and the pre-race showcase
+  are unaffected. Fixing this properly needs either a per-model eye-point
+  marker or hiding the cockpit toggle whenever a real model is active —
+  not done yet, flag it if it matters.
+
+  ⚠ Also noticeable in the pre-race showcase: a couple of stray flat shapes
+  float near the car (not attached to it) — likely a decal/sticker or
+  shadow-catcher plane baked into the source file at an odd position. Harmless
+  visually once actually racing (camera's further away), but worth trimming
+  from the source file if you want the showcase fully clean.
+
+  Drop a .glb here named EITHER (for any NEW/replacement car model):
     car-<designId>.glb   — used only for that one CAR_DESIGNS entry (see
                             carBuilder.js), e.g. car-apex.glb, car-titan.glb,
                             car-nimbus.glb, car-ranger.glb, car-classic.glb
@@ -10,15 +56,17 @@ pre-race ThreeCarPreviewScene) — NOT YET SUPPLIED, this is just where to drop 
   loadRealCarBody() in carBuilder.js tries the per-design file first, then the
   shared default, then gives up silently — no code change needed either way.
 
-  It replaces ONLY the outer body shell (chassis/cabin/bumpers/skirts/grille/
-  scoop/roof-rack/spoiler) — wheels, exhaust flame/smoke, tail light, the
-  driver figure, and the name plate are unaffected and stay exactly where they
-  are, so garage accessories and the in-race correct/wrong-answer feedback
-  (flames, smoke, camera shake) keep working unmodified regardless of which
-  body is in use. It's auto-scaled to the procedural chassis length (~3.7
-  units) and dropped to sit on the ground — no manual scale/position needed.
-  If your model already has its own wheels, tell me and I'll hide the
-  procedural ones instead of doubling up.
+  It's a FULL REPLACEMENT, not a combination — as soon as it loads it hides
+  the entire procedural car (body shell, wheels + axles, driver figure) so
+  nothing procedural shows through it or doubles up alongside it (no extra
+  wheels, no driver floating on a roof that isn't there). Your model should
+  therefore include its own wheels. The tail light glow, exhaust flame/smoke
+  (correct/wrong-answer feedback), and the name plate stay put on top of it
+  either way, so that feedback and garage accessories keep working regardless
+  of which body is in use. It's auto-scaled to the procedural chassis length
+  (~3.7 units) and dropped to sit on the ground — no manual scale/position
+  needed. If your model has NO wheels of its own (body-only), tell me and
+  I'll switch it back to keeping the procedural wheels visible instead.
 
   Where to get one (free, real-time-game-ready, easy license):
     - Kenney.nl (kenney.nl/assets) — CC0 low-poly car packs; closest match to
