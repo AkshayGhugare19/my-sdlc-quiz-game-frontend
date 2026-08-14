@@ -193,13 +193,14 @@ function sunSprite() {
 
 // ── scene ────────────────────────────────────────────────────────────────────
 export default class ThreeRaceScene {
-  constructor({ container, emitter, laneCount = 3, avatarKey = 'alex', avatarName = 'ALEX', accessorySlots = [] }) {
+  constructor({ container, emitter, laneCount = 3, avatarKey = 'alex', avatarName = 'ALEX', accessorySlots = [], carDesignId }) {
     this.container = container;
     this.emitter = emitter;
     this.laneCount = laneCount;
     this.avatarKey = avatarKey;
     this.avatarName = (avatarName || 'ALEX').toUpperCase().slice(0, 10);
     this.accessorySlots = accessorySlots; // every equipped garage slot → its own visual on the car
+    this.carDesignId = carDesignId; // which car design (see carBuilder.js CAR_DESIGNS) — undefined = default
     this.flameScale = 1; // EXHAUST/BOOST accessories enlarge the flames
 
     this.locked = true; // countdown / feedback pauses full speed
@@ -483,6 +484,7 @@ export default class ThreeRaceScene {
       avatarKey: this.avatarKey,
       avatarName: this.avatarName,
       accessorySlots: this.accessorySlots,
+      carDesignId: this.carDesignId,
     });
     this.wheels = parts.wheels;
     this.flameParts = parts.flameParts;

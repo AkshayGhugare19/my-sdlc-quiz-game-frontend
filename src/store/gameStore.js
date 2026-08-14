@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api, setToken, getToken } from '../services/api';
+import { DEFAULT_CAR_DESIGN } from '../game/carBuilder';
 
 // Which 3D game the player races in ('racing' = sunset circuit car,
 // 'subway' = subway-surfer track runner). Persisted so the last pick is the
@@ -10,6 +11,17 @@ const getGameType = () => {
     return localStorage.getItem(GAME_TYPE_KEY) || 'racing';
   } catch {
     return 'racing';
+  }
+};
+
+// Which car design the player races in (see game/carBuilder.js CAR_DESIGNS),
+// chosen on the pre-race car-showcase screen. Persisted the same way.
+const CAR_DESIGN_KEY = 'rq_cardesign';
+const getCarDesign = () => {
+  try {
+    return localStorage.getItem(CAR_DESIGN_KEY) || DEFAULT_CAR_DESIGN;
+  } catch {
+    return DEFAULT_CAR_DESIGN;
   }
 };
 
@@ -26,6 +38,8 @@ export const useGameStore = create((set, get) => ({
   activeMission: null,
   // The 3D game mode chosen before a race (see GameChoiceModal).
   gameType: getGameType(),
+  // The car design chosen on the pre-race car showcase (see CarPreview.jsx).
+  carDesign: getCarDesign(),
   // Armed from the dashboard's "Race" button on a joined tournament; consumed
   // by the NEXT race start so exactly one race counts for the tournament.
   activeTournament: null,
@@ -110,6 +124,17 @@ export const useGameStore = create((set, get) => ({
       /* ignore storage errors (private mode etc.) */
     }
     set({ gameType });
+  },
+
+  // Remember the chosen car design so it survives reloads and pre-selects
+  // itself the next time the car showcase appears.
+  setCarDesign(carDesign) {
+    try {
+      localStorage.setItem(CAR_DESIGN_KEY, carDesign);
+    } catch {
+      /* ignore storage errors (private mode etc.) */
+    }
+    set({ carDesign });
   },
 
   // Arm the next race as a tournament race (or pass null to disarm).

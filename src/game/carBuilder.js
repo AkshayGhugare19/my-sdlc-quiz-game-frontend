@@ -5,17 +5,9 @@ import * as THREE from 'three';
 // the exact same car from one place. Pure geometry/materials, no scene/physics
 // state — callers own placement, animation and disposal.
 
-// Car paint per avatar (keeps each avatar's identity like the old kart colors).
-export const CAR_PAINT = {
-  alex: 0xf2f4f7, // white, GT-style
-  maya: 0x8b5cf6,
-  omar: 0xf59e0b,
-  aya: 0x14b8a6,
-  james: 0x4f46e5,
-  ava: 0xe11d48,
-};
-
-// Driver colours per avatar — same palette the old Phaser kart used.
+// Driver colours per avatar — same palette the old Phaser kart used. The car's
+// own paint/brand identity now comes from CAR_DESIGNS (the player's chosen
+// car), independent of avatar — the avatar only styles the driver figure.
 export const DRIVER_COLORS = {
   alex: { helmet: 0x1f2937, suit: 0x111827, skin: 0xf1c9a5 },
   maya: { helmet: 0x7e22ce, suit: 0x4c1d95, skin: 0xf1c9a5 },
@@ -24,6 +16,44 @@ export const DRIVER_COLORS = {
   james: { helmet: 0x3730a3, suit: 0x1e1b4b, skin: 0x8d5524 },
   ava: { helmet: 0x9f1239, suit: 0x881337, skin: 0xf1c9a5 },
 };
+
+// Selectable car designs — five distinct "manufacturer" silhouettes (sport
+// coupe / muscle car / EV / off-roader / vintage roadster), each with its own
+// proportions, paint + accent colours, and a couple of signature add-ons, so
+// picking a car actually changes its shape and identity, not just its paint.
+export const CAR_DESIGNS = [
+  {
+    id: 'apex', name: 'Apex GT', brand: 'Velocity Motors', tagline: 'Sleek sport coupe',
+    paint: 0xdc2626, accent: 0xf8fafc, dark: 0x14181f,
+    width: 1, hoodDrop: 0.07, rideHeight: 0, wheelR: 0.3,
+    spoiler: true, hoodScoop: false, roofRack: false, chrome: false, glow: false,
+  },
+  {
+    id: 'titan', name: 'Titan Muscle', brand: 'Ironclad', tagline: 'Wide-body muscle car',
+    paint: 0x14181f, accent: 0xf59e0b, dark: 0x1a1d24,
+    width: 1.16, hoodDrop: 0.02, rideHeight: 0, wheelR: 0.35,
+    spoiler: false, hoodScoop: true, roofRack: false, chrome: false, glow: false,
+  },
+  {
+    id: 'nimbus', name: 'Nimbus EV', brand: 'Nimbus Motors', tagline: 'Aerodynamic electric',
+    paint: 0xf8fafc, accent: 0x22d3ee, dark: 0x0f172a,
+    width: 0.96, hoodDrop: 0.11, rideHeight: 0, wheelR: 0.28,
+    spoiler: true, hoodScoop: false, roofRack: false, chrome: false, glow: true,
+  },
+  {
+    id: 'ranger', name: 'Ranger Raptor', brand: 'Trailblazer', tagline: 'Rugged off-roader',
+    paint: 0x15803d, accent: 0xd6c8a3, dark: 0x22281f,
+    width: 1.08, hoodDrop: -0.04, rideHeight: 0.22, wheelR: 0.42,
+    spoiler: false, hoodScoop: false, roofRack: true, chrome: false, glow: false,
+  },
+  {
+    id: 'classic', name: 'Heritage Roadster', brand: 'Heritage Co.', tagline: 'Vintage-styled classic',
+    paint: 0x7c2d12, accent: 0xf5e6c8, dark: 0x2a1810,
+    width: 0.94, hoodDrop: 0.02, rideHeight: 0, wheelR: 0.27,
+    spoiler: false, hoodScoop: false, roofRack: false, chrome: true, glow: false,
+  },
+];
+export const DEFAULT_CAR_DESIGN = CAR_DESIGNS[0].id;
 
 // ── tiny canvas-texture helper (shared with ThreeRaceScene's world textures) ─
 export function canvasTexture(w, h, draw, { repeatX = 1, repeatY = 1 } = {}) {
@@ -57,16 +87,144 @@ function namePlateTexture(name) {
   });
 }
 
-// Builds the open-wheel racing car (same geometry the live race scene always
-// used) at the origin, with every equipped accessory slot layered on. Returns
-// the car group plus the individual parts callers animate (wheels spin,
+// Builds one design's enclosed body — hood, cabin surround, rear deck,
+// bumpers, skirts, fender flares, and its signature add-ons (scoop / roof
+// rack / spoiler-mount point) — around the SAME cockpit/driver/wheel/effect
+// layout every design shares, so avatars, garage accessories, and the
+// in-race flame/smoke/boost feedback all keep working unmodified regardless
+// of which car is equipped.
+function buildBody(car, cfg, parts) {
+  const bodyMat = new THREE.MeshStandardMaterial({ color: cfg.paint, roughness: 0.25, metalness: 0.55 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: cfg.accent, roughness: 0.35, metalness: 0.3 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: cfg.dark, roughness: 0.55, metalness: 0.3 });
+  const chromeMat = new THREE.MeshStandardMaterial({ color: 0xd7dde6, roughness: 0.15, metalness: 0.95 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x1a2230, roughness: 0.1, metalness: 0.4, transparent: true, opacity: 0.75 });
+  const trimMat = cfg.chrome ? chromeMat : darkMat;
+  const y0 = 0.28 + cfg.rideHeight; // ground clearance
+  const w = cfg.width;
+  const chH = 0.46 - cfg.hoodDrop * 0.3; // chassis (body) height
+  const chZ = -0.15; // chassis centre, front (-Z) to rear (+Z)
+  const chLen = 3.7;
+  const chTop = y0 + chH; // top-of-body line the whole silhouette reads off
+
+  // ── one continuous chassis box = the whole hood-to-trunk body line — a
+  // single unbroken shape reads as "a car" far more reliably than several
+  // stacked/offset boxes, which is what low-poly car models actually do ──
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(w, chH, chLen), bodyMat);
+  chassis.position.set(0, y0 + chH / 2, chZ);
+  chassis.castShadow = true;
+  car.add(chassis);
+
+  // cockpit wall — a low rim around the open driver's bay, sitting on the
+  // chassis roughly at its middle (hood ahead of it, trunk behind it)
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(w * 0.72, 0.18, 1.3), darkMat);
+  rim.position.set(0, chTop + 0.09, -0.35);
+  car.add(rim);
+  const rimTop = chTop + 0.18;
+
+  // windshield, raked back over the hood (open-top — the driver stays visible
+  // rising above the cockpit wall, same as before)
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(w * 0.62, 0.44, 0.06), glassMat);
+  windshield.position.set(0, chTop + 0.33, -0.98);
+  windshield.rotation.x = 0.42;
+  car.add(windshield);
+
+  if (cfg.hoodScoop) {
+    const scoop = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.55), darkMat);
+    scoop.position.set(0, chTop + 0.06, -1.35);
+    car.add(scoop);
+  }
+
+  // front + rear bumpers, grille, headlights, tail light — trim at the tips
+  // of the chassis, no separate hood/trunk geometry needed
+  const frontZ = chZ - chLen / 2;
+  const rearZ = chZ + chLen / 2;
+  const frontBumper = new THREE.Mesh(new THREE.BoxGeometry(w * 1.0, chH * 0.5, 0.28), trimMat);
+  frontBumper.position.set(0, y0 + chH * 0.28, frontZ - 0.1);
+  car.add(frontBumper);
+  const grille = new THREE.Mesh(new THREE.BoxGeometry(w * 0.5, chH * 0.4, 0.06), darkMat);
+  grille.position.set(0, y0 + chH * 0.4, frontZ - 0.22);
+  car.add(grille);
+  [-1, 1].forEach((s) => {
+    const light = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.1, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0xfff8e0, emissive: 0xfff2b8, emissiveIntensity: 0.9 }),
+    );
+    light.position.set(s * w * 0.36, y0 + chH * 0.55, frontZ - 0.22);
+    car.add(light);
+  });
+  const rearBumper = new THREE.Mesh(new THREE.BoxGeometry(w * 1.0, chH * 0.5, 0.26), trimMat);
+  rearBumper.position.set(0, y0 + chH * 0.28, rearZ + 0.1);
+  car.add(rearBumper);
+  const tail = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.09, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x550b0b, emissive: 0xff2222, emissiveIntensity: 1.4 }),
+  );
+  tail.position.set(0, y0 + chH * 0.6, rearZ + 0.11);
+  car.add(tail);
+  parts.tailLight = tail;
+
+  // side skirts (accent stripe) along the full length
+  [-1, 1].forEach((s) => {
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, chLen - 0.3), accentMat);
+    skirt.position.set(s * w * 0.52, y0 + 0.05, chZ);
+    car.add(skirt);
+  });
+
+  // roof rack + mounted spare wheel (off-roader) — mounted over the cockpit
+  if (cfg.roofRack) {
+    [-1, 1].forEach((s) => {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 1.5), darkMat);
+      rail.position.set(s * w * 0.3, rimTop + 0.5, -0.35);
+      car.add(rail);
+    });
+    const spareTyre = new THREE.Mesh(
+      new THREE.TorusGeometry(0.3, 0.1, 8, 20),
+      new THREE.MeshStandardMaterial({ color: 0x0c0e12, roughness: 0.9 }),
+    );
+    spareTyre.position.set(0, y0 + chH * 0.65, rearZ + 0.16);
+    car.add(spareTyre);
+  }
+
+  // rear wing carrying the player's name plate, if this design has one —
+  // otherwise the plate mounts flat on the trunk so it's always shown
+  if (cfg.spoiler) {
+    [-0.5, 0.5].forEach((x) => {
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.42, 0.18), darkMat);
+      strut.position.set(x, chTop + 0.21, rearZ - 0.28);
+      car.add(strut);
+    });
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(w * 1.7, 0.4, 0.1), bodyMat);
+    wing.position.set(0, chTop + 0.56, rearZ - 0.24);
+    wing.castShadow = true;
+    car.add(wing);
+    [-w * 0.88, w * 0.88].forEach((x) => {
+      const ep = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.48, 0.34), darkMat);
+      ep.position.set(x, chTop + 0.56, rearZ - 0.28);
+      car.add(ep);
+    });
+    parts.namePlateY = chTop + 0.56;
+  } else {
+    parts.namePlateY = y0 + chH * 0.6;
+  }
+  const namePlate = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.7, 0.42),
+    new THREE.MeshBasicMaterial({ map: parts.namePlateTexture, transparent: true }),
+  );
+  namePlate.position.set(0, parts.namePlateY, rearZ + 0.14);
+  car.add(namePlate);
+
+  return { bodyMat, accentMat, darkMat, chromeMat, y0, chTop, frontZ, rearZ };
+}
+
+// Builds a car (one of CAR_DESIGNS) at the origin, with the chosen avatar's
+// driver figure and every equipped accessory slot layered on. Returns the
+// car group plus the individual parts callers animate (wheels spin,
 // flame/smoke opacity, wing flutter, trail fade, gem spin, tail-light glow).
-export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlots = [] } = {}) {
-  const paint = CAR_PAINT[avatarKey] ?? CAR_PAINT.alex;
+export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlots = [], carDesignId = DEFAULT_CAR_DESIGN } = {}) {
+  const cfg = CAR_DESIGNS.find((d) => d.id === carDesignId) ?? CAR_DESIGNS[0];
   const driver = DRIVER_COLORS[avatarKey] ?? DRIVER_COLORS.alex;
   const car = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color: paint, roughness: 0.25, metalness: 0.55 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x14181f, roughness: 0.55, metalness: 0.3 });
 
   const parts = {
     car,
@@ -78,125 +236,60 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
     wingParts: null,
     trailMesh: null,
     specialGem: null,
+    namePlateTexture: namePlateTexture((avatarName || 'ALEX').toUpperCase().slice(0, 10)),
   };
 
-  // ── open-wheel racing car (rear view is what the player sees) ──
-  // central tub
-  const tub = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.42, 3.4), bodyMat);
-  tub.position.set(0, 0.48, -0.2);
-  tub.castShadow = true;
-  car.add(tub);
-
-  // tapered nose cone + front wing
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.26, 1.3), bodyMat);
-  nose.position.set(0, 0.46, -2.2);
-  nose.rotation.x = 0.05;
-  nose.castShadow = true;
-  car.add(nose);
-  const frontWing = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.07, 0.55), darkMat);
-  frontWing.position.set(0, 0.26, -2.7);
-  car.add(frontWing);
-  [-1.02, 1.02].forEach((x) => {
-    const ep = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.55), bodyMat);
-    ep.position.set(x, 0.34, -2.7);
-    car.add(ep);
-  });
-
-  // sidepods
-  [-0.78, 0.78].forEach((x) => {
-    const pod = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.36, 1.7), bodyMat);
-    pod.position.set(x, 0.44, 0.3);
-    pod.castShadow = true;
-    car.add(pod);
-    const intake = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.24, 0.08), darkMat);
-    intake.position.set(x, 0.46, -0.54);
-    car.add(intake);
-  });
-
-  // cockpit rim + engine cover behind the driver
-  const rim = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.14, 1.3), darkMat);
-  rim.position.set(0, 0.74, -0.35);
-  car.add(rim);
-  const cover = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, 1.3), bodyMat);
-  cover.position.set(0, 0.78, 0.95);
-  cover.rotation.x = -0.1;
-  cover.castShadow = true;
-  car.add(cover);
-  const airbox = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.4), darkMat);
-  airbox.position.set(0, 1.12, 0.62);
-  car.add(airbox);
+  const { bodyMat, darkMat, y0 } = buildBody(car, cfg, parts);
 
   // ── the driver — visible in the open cockpit (avatar suit + helmet) ──
   const suitMat = new THREE.MeshStandardMaterial({ color: driver.suit, roughness: 0.8 });
   const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.34, 0.5), suitMat);
-  shoulders.position.set(0, 0.92, -0.28);
+  shoulders.position.set(0, y0 + 0.64, -0.28);
   shoulders.castShadow = true;
   car.add(shoulders);
   const neck = new THREE.Mesh(
     new THREE.CylinderGeometry(0.09, 0.11, 0.12, 8),
     new THREE.MeshStandardMaterial({ color: driver.skin, roughness: 0.7 }),
   );
-  neck.position.set(0, 1.12, -0.28);
+  neck.position.set(0, y0 + 0.84, -0.28);
   car.add(neck);
   const helmet = new THREE.Mesh(
     new THREE.SphereGeometry(0.21, 16, 14),
     new THREE.MeshStandardMaterial({ color: driver.helmet, roughness: 0.2, metalness: 0.35 }),
   );
-  helmet.position.set(0, 1.3, -0.28);
+  helmet.position.set(0, y0 + 1.02, -0.28);
   helmet.castShadow = true;
   car.add(helmet);
   const stripe = new THREE.Mesh(
     new THREE.BoxGeometry(0.05, 0.02, 0.4),
     new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 }),
   );
-  stripe.position.set(0, 1.5, -0.28);
+  stripe.position.set(0, y0 + 1.22, -0.28);
   car.add(stripe);
 
-  // rear diffuser + tail light
-  const diffuser = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.24, 0.3), darkMat);
-  diffuser.position.set(0, 0.4, 1.62);
-  car.add(diffuser);
-  const tail = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, 0.09, 0.06),
-    new THREE.MeshStandardMaterial({ color: 0x550b0b, emissive: 0xff2222, emissiveIntensity: 1.4 }),
-  );
-  tail.position.set(0, 0.56, 1.78);
-  car.add(tail);
-  parts.tailLight = tail;
-
-  // ── big rear wing carrying the player's name, facing the camera ──
-  [-0.5, 0.5].forEach((x) => {
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.2), darkMat);
-    strut.position.set(x, 1.06, 1.55);
-    car.add(strut);
-  });
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 0.1), bodyMat);
-  wing.position.set(0, 1.5, 1.6);
-  wing.castShadow = true;
-  car.add(wing);
-  [-0.98, 0.98].forEach((x) => {
-    const ep = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.62, 0.42), darkMat);
-    ep.position.set(x, 1.5, 1.55);
-    car.add(ep);
-  });
-  const namePlate = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.7, 0.42),
-    new THREE.MeshBasicMaterial({ map: namePlateTexture((avatarName || 'ALEX').toUpperCase().slice(0, 10)), transparent: true }),
-  );
-  namePlate.position.set(0, 1.5, 1.66);
-  car.add(namePlate);
-
-  // exposed wheels (bigger at the rear, open-wheel style) + axles
+  // wheels (sized per design) + axles
+  const r = cfg.wheelR;
   const tyreMat = new THREE.MeshStandardMaterial({ color: 0x0c0e12, roughness: 0.95 });
   const rimMat = new THREE.MeshStandardMaterial({ color: 0x9aa3af, roughness: 0.3, metalness: 0.8 });
-  [[-0.98, -1.55, 0.38], [0.98, -1.55, 0.38], [-0.98, 1.25, 0.46], [0.98, 1.25, 0.46]].forEach(([x, z, r]) => {
+  const hw = cfg.width * 0.48; // track width stays just inside the body edge, not poking past it
+  [[-hw, -1.35], [hw, -1.35], [-hw, 1.05], [hw, 1.05]].forEach(([x, z]) => {
     const wheel = new THREE.Group();
     const tyre = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.4, 20), tyreMat);
     tyre.rotation.z = Math.PI / 2;
     tyre.castShadow = true;
+    wheel.add(tyre);
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r * 0.55, 0.42, 12), rimMat);
     hub.rotation.z = Math.PI / 2;
-    wheel.add(tyre, hub);
+    wheel.add(hub);
+    if (cfg.chrome) {
+      // whitewall ring — a classic-car signature
+      const whitewall = new THREE.Mesh(
+        new THREE.TorusGeometry(r * 0.82, 0.035, 8, 20),
+        new THREE.MeshStandardMaterial({ color: 0xf5f0e6, roughness: 0.6 }),
+      );
+      whitewall.rotation.y = Math.PI / 2;
+      wheel.add(whitewall);
+    }
     wheel.position.set(x, r, z);
     car.add(wheel);
     parts.wheels.push(wheel);
@@ -205,10 +298,10 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
     car.add(axle);
   });
 
-  // cyan under-glow (nod to the old kart's neon)
+  // under-glow, tinted to the design's own accent colour
   const glow = new THREE.Mesh(
     new THREE.PlaneGeometry(2.4, 4.6),
-    new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.16, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: cfg.accent, transparent: true, opacity: cfg.glow ? 0.28 : 0.14, depthWrite: false }),
   );
   glow.rotation.x = -Math.PI / 2;
   glow.position.y = 0.03;
@@ -221,7 +314,7 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
       new THREE.MeshBasicMaterial({ color: 0xffa62b, transparent: true, opacity: 0 }),
     );
     flame.rotation.x = -Math.PI / 2;
-    flame.position.set(x, 0.5, 2.25);
+    flame.position.set(x, y0 + 0.22, 2.25);
     car.add(flame);
     parts.flameParts.push(flame);
   });
@@ -232,7 +325,7 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
       new THREE.SphereGeometry(0.22, 8, 8),
       new THREE.MeshBasicMaterial({ color: 0x8b949e, transparent: true, opacity: 0 }),
     );
-    puff.position.set(0, 0.6, 1.9);
+    puff.position.set(0, y0 + 0.32, 1.9);
     puff.userData.seed = i / 6;
     car.add(puff);
     parts.smokeParts.push(puff);

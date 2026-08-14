@@ -28,8 +28,11 @@ function floorTexture() {
 }
 
 export default class ThreeCarPreviewScene {
-  constructor({ container, avatarKey = 'alex', avatarName = 'ALEX', accessorySlots = [] }) {
+  constructor({ container, avatarKey = 'alex', avatarName = 'ALEX', accessorySlots = [], carDesignId }) {
     this.container = container;
+    this.avatarKey = avatarKey;
+    this.avatarName = avatarName;
+    this.accessorySlots = accessorySlots;
     this.dragging = false;
     this.manualSpin = 0; // extra rotation from a pointer drag, added atop autorotate
     this.autoSpin = true;
@@ -58,19 +61,10 @@ export default class ThreeCarPreviewScene {
     this.buildLights();
     this.buildFloor();
 
-    const parts = buildCar({ avatarKey, avatarName, accessorySlots });
-    this.car = parts.car;
-    this.car.position.set(0, 0, 0);
-    // a light idle flicker on the exhaust so the showroom car doesn't feel dead
-    this.flameParts = parts.flameParts;
-    this.tailLight = parts.tailLight;
-    this.wingParts = parts.wingParts;
-    this.specialGem = parts.specialGem;
-    this.scene.add(this.car);
-
     this.pivot = new THREE.Group();
-    this.pivot.add(this.car);
     this.scene.add(this.pivot);
+    this.carDesignId = carDesignId;
+    this.buildCarMesh();
 
     this.bindPointer();
 
@@ -119,6 +113,42 @@ export default class ThreeCarPreviewScene {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.scene.add(floor);
+  }
+
+  buildCarMesh() {
+    const parts = buildCar({
+      avatarKey: this.avatarKey,
+      avatarName: this.avatarName,
+      accessorySlots: this.accessorySlots,
+      carDesignId: this.carDesignId,
+    });
+    this.car = parts.car;
+    this.car.position.set(0, 0, 0);
+    this.flameParts = parts.flameParts;
+    this.tailLight = parts.tailLight;
+    this.wingParts = parts.wingParts;
+    this.specialGem = parts.specialGem;
+    this.pivot.add(this.car);
+  }
+
+  // Swaps in a different car design in place — used by the car-picker's
+  // prev/next controls — without tearing down the renderer/lights/floor.
+  setCarDesign(carDesignId) {
+    if (carDesignId === this.carDesignId) return;
+    this.carDesignId = carDesignId;
+    if (this.car) {
+      this.pivot.remove(this.car);
+      this.car.traverse((o) => {
+        o.geometry?.dispose?.();
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => {
+          if (!m) return;
+          m.map?.dispose?.();
+          m.dispose?.();
+        });
+      });
+    }
+    this.buildCarMesh();
   }
 
   bindPointer() {

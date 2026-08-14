@@ -29,7 +29,7 @@ export function createEmitter() {
 // Boots the three.js race scene into a div and hands the live scene back to
 // React via onReady — the same contract PhaserGame.jsx had, so the Race screen
 // can keep pushing questions / feedback imperatively.
-export default function ThreeGame({ emitter, laneCount, avatarKey, avatarName, accessories, gameType, onLaneLayout, onReady }) {
+export default function ThreeGame({ emitter, laneCount, avatarKey, avatarName, accessories, gameType, carDesignId, onLaneLayout, onReady }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -41,6 +41,7 @@ export default function ThreeGame({ emitter, laneCount, avatarKey, avatarName, a
       avatarKey,
       avatarName,
       accessorySlots: (accessories || []).map((a) => a?.slot).filter(Boolean),
+      carDesignId,
     });
     scene.onLaneLayout = onLaneLayout;
     onReady?.(scene);

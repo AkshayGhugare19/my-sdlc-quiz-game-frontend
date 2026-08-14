@@ -71,6 +71,9 @@ export default function Race() {
   // player picks; `gameType` from the store is only the remembered default.
   const gameType = useGameStore((s) => s.gameType);
   const setGameType = useGameStore((s) => s.setGameType);
+  // Which car design to race — chosen/cycled on the car-showcase screen below.
+  const carDesign = useGameStore((s) => s.carDesign);
+  const setCarDesign = useGameStore((s) => s.setCarDesign);
   const [gameChoice, setGameChoice] = useState(null);
   // Every equipped accessory (one per slot) — all of them are shown on the kart.
   const equippedList = (player?.garage || [])
@@ -360,6 +363,8 @@ export default function Race() {
         avatarName={avatar?.name}
         missionName={boot?.mission?.title}
         equippedList={equippedList}
+        carDesignId={carDesign}
+        onCarDesignChange={setCarDesign}
         onStart={() => setPreviewDone(true)}
         onBack={() => setGameChoice(null)}
       />
@@ -390,6 +395,7 @@ export default function Race() {
           avatarName={avatar?.name}
           accessories={equippedList}
           gameType={gameChoice}
+          carDesignId={carDesign}
           onLaneLayout={onLaneLayout}
           onReady={(scene) => (sceneRef.current = scene)}
         />
