@@ -1,3 +1,34 @@
+CAR models for the Racing game (carBuilder.js, shared by ThreeRaceScene and the
+pre-race ThreeCarPreviewScene) — NOT YET SUPPLIED, this is just where to drop one:
+
+  Drop a .glb here named EITHER:
+    car-<designId>.glb   — used only for that one CAR_DESIGNS entry (see
+                            carBuilder.js), e.g. car-apex.glb, car-titan.glb,
+                            car-nimbus.glb, car-ranger.glb, car-classic.glb
+    car.glb               — used as the shared default for every design that
+                            doesn't have its own car-<designId>.glb
+  loadRealCarBody() in carBuilder.js tries the per-design file first, then the
+  shared default, then gives up silently — no code change needed either way.
+
+  It replaces ONLY the outer body shell (chassis/cabin/bumpers/skirts/grille/
+  scoop/roof-rack/spoiler) — wheels, exhaust flame/smoke, tail light, the
+  driver figure, and the name plate are unaffected and stay exactly where they
+  are, so garage accessories and the in-race correct/wrong-answer feedback
+  (flames, smoke, camera shake) keep working unmodified regardless of which
+  body is in use. It's auto-scaled to the procedural chassis length (~3.7
+  units) and dropped to sit on the ground — no manual scale/position needed.
+  If your model already has its own wheels, tell me and I'll hide the
+  procedural ones instead of doubling up.
+
+  Where to get one (free, real-time-game-ready, easy license):
+    - Kenney.nl (kenney.nl/assets) — CC0 low-poly car packs; closest match to
+      this game's existing style, search "car kit" / "racing kit".
+    - Poly Pizza (poly.pizza) — free CC0/CC-BY glTF models, search "car".
+    - Sketchfab (sketchfab.com) — filter Downloadable + a CC license, search
+      "car" or "sports car"; export/download as glTF/GLB if not already.
+  Export as glTF Binary (.glb) with textures embedded (single file, no loose
+  .bin/.png beside it) — that's what GLTFLoader expects here.
+
 Character models for the Subway Surfer game (ThreeSubwayScene) — public/models/.
 
 ACTIVE runner (loaded by RUNNER_MODEL_URL in src/game/ThreeSubwayScene.js):

@@ -37,6 +37,40 @@ function fmt(sec) {
 // Pale wash of a lane color, used for card bodies and their bubble tails.
 const laneTint = (color) => `color-mix(in srgb, ${color} 9%, white)`;
 
+// Dashboard-style semicircle speedometer, driven by real telemetry off the
+// scene (ThreeRaceScene reports this.speed each frame) — not decorative.
+function SpeedGauge({ kmh = 0, max = 180 }) {
+  const pct = Math.min(1, Math.max(0, kmh / max));
+  const arcLen = 170; // ≈ π·54, the semicircle path's length below
+  const angle = -180 + pct * 180; // needle sweep, degrees, pointing along the arc
+  const rad = (angle * Math.PI) / 180;
+  return (
+    <div className="relative w-24 h-16 md:w-28 md:h-[4.6rem]">
+      <svg viewBox="0 0 120 66" className="w-full h-full overflow-visible">
+        <path d="M6,60 A54,54 0 0 1 114,60" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="6" strokeLinecap="round" />
+        <path
+          d="M6,60 A54,54 0 0 1 114,60"
+          fill="none"
+          stroke="#22d3ee"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={`${pct * arcLen} ${arcLen}`}
+        />
+        <line
+          x1="60" y1="60"
+          x2={60 + 42 * Math.cos(rad)} y2={60 + 42 * Math.sin(rad)}
+          stroke="#fff" strokeWidth="2.5" strokeLinecap="round"
+        />
+        <circle cx="60" cy="60" r="4" fill="#fff" />
+      </svg>
+      <div className="absolute inset-x-0 bottom-0 text-center pointer-events-none">
+        <div className="text-white font-black text-lg leading-none tabular-nums">{kmh}</div>
+        <div className="text-white/50 text-[8px] font-bold tracking-wider">KM/H</div>
+      </div>
+    </div>
+  );
+}
+
 // Small checkered pennant at each end of the checkpoint track.
 function CheckeredFlag({ flip }) {
   return (
@@ -130,6 +164,13 @@ export default function Race() {
   const [accessory, setAccessory] = useState(null); // full unlocked accessory {name, slot, message…}
   const [gear, setGear] = useState([]); // this mission's unlockable accessories (locked+unlocked)
   const [raceError, setRaceError] = useState(null);
+  // Live telemetry off the scene itself (real speed/distance, not decorative)
+  // for the speedometer + distance HUD, and the racing-mode-only cockpit/
+  // headlight/pause controls (all no-ops in Subway Surfer — sceneRef?.method?.()).
+  const [telemetry, setTelemetry] = useState({ speedKmh: 0, distanceM: 0 });
+  const [cockpitView, setCockpitView] = useState(false);
+  const [headlightsOn, setHeadlightsOn] = useState(false);
+  const [paused, setPaused] = useState(false);
 
   // 1. Start session. "/race/tournament" is a tournament race — no mission;
   // the server draws questions from the tournament's own configured pool.
@@ -226,17 +267,38 @@ export default function Race() {
     }
   }, [navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
+  // Cockpit/headlight/pause HUD controls — racing mode only, all no-ops on
+  // the subway scene (optional chaining) since it has no camera modes/lights.
+  const toggleCockpit = useCallback(() => {
+    setCockpitView((v) => {
+      const next = !v;
+      sceneRef.current?.setViewMode?.(next ? 'cockpit' : 'chase');
+      return next;
+    });
+  }, []);
+  const toggleHeadlights = useCallback(() => {
+    const on = sceneRef.current?.toggleHeadlights?.();
+    setHeadlightsOn((v) => on ?? !v);
+  }, []);
+  const togglePause = useCallback(() => {
+    setPaused((v) => {
+      const next = !v;
+      sceneRef.current?.setPaused?.(next);
+      return next;
+    });
+  }, []);
+
   // Steering works any time the car is racing — not just while parked at a
   // checkpoint — so the player can freely drive left/right between
   // checkpoints too; only committing an answer (below) requires atCheckpoint.
   const chooseLane = useCallback((lane) => {
-    if (!racing || busy) return;
+    if (!racing || busy || paused) return;
     setSelected(lane);
     emitterRef.current.emit('setLane', lane);
-  }, [racing, busy]);
+  }, [racing, busy, paused]);
 
   const commit = useCallback(async (lane) => {
-    if (!racing || busy || !atCheckpoint) return;
+    if (!racing || busy || !atCheckpoint || paused) return;
     const laneToSend = lane ?? selected;
     setBusy(true);
     setSelected(laneToSend);
@@ -298,7 +360,7 @@ export default function Race() {
         }, DRIVE_BEAT_MS);
       }
     }, 1700);
-  }, [racing, busy, atCheckpoint, selected, boot, navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
+  }, [racing, busy, atCheckpoint, paused, selected, boot, navigate, refreshProfile, bundleId, isQuickRace, isTournamentRace]);
 
   // Keyboard controls — ←/→ steer (any time), ↑/↓ throttle up/brake (held,
   // any time), Space/Enter commit (only takes effect while atCheckpoint,
@@ -316,7 +378,7 @@ export default function Race() {
         applyThrottle();
         return;
       }
-      if (!racing || busy) return;
+      if (!racing || busy || paused) return;
       if (e.code === 'ArrowLeft') chooseLane(Math.max(0, selected - 1));
       else if (e.code === 'ArrowRight') chooseLane(Math.min(lanes.length - 1, selected + 1));
       else if (e.code === 'Space' || e.code === 'Enter') {
@@ -336,7 +398,7 @@ export default function Race() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [racing, busy, selected, lanes, chooseLane, commit]);
+  }, [racing, busy, paused, selected, lanes, chooseLane, commit]);
 
   // Pre-race prompt: choose Racing or Subway Surfer before anything boots. This
   // gate sits ahead of every entry point (mission / course / bundle / quick /
@@ -397,6 +459,7 @@ export default function Race() {
           gameType={gameChoice}
           carDesignId={carDesign}
           onLaneLayout={onLaneLayout}
+          onTelemetry={isSubway ? undefined : setTelemetry}
           onReady={(scene) => (sceneRef.current = scene)}
         />
       </div>
@@ -436,17 +499,30 @@ export default function Race() {
               </div>
             )}
           </div>
-          <div className="text-right space-y-1.5">
-            <div className="bg-white/90 rounded-xl px-3.5 py-1.5 shadow-lg text-right">
-              <div className="text-[9px] tracking-[0.2em] font-bold text-slate-500">TIME REMAINING</div>
-              <div className={`text-xl font-extrabold ${timer <= 15 ? 'text-red-500' : 'text-[#0f1b33]'}`}>⏱ {fmt(timer)}</div>
-            </div>
-            <div className="bg-white/90 rounded-xl px-3.5 py-1.5 shadow-lg text-right">
-              <div className="text-[9px] tracking-[0.2em] font-bold text-slate-500">STARS EARNED</div>
-              <div className="text-lg font-extrabold text-[#0f1b33]">
-                <span className="text-amber-400">⭐</span> {hud?.starsEarned ?? 0} / {hud?.maxStars ?? 5}
+          <div className="flex items-start gap-2.5">
+            <div className="text-right space-y-1.5">
+              <div className="bg-white/90 rounded-xl px-3.5 py-1.5 shadow-lg text-right">
+                <div className="text-[9px] tracking-[0.2em] font-bold text-slate-500">TIME REMAINING</div>
+                <div className={`text-xl font-extrabold ${timer <= 15 ? 'text-red-500' : 'text-[#0f1b33]'}`}>⏱ {fmt(timer)}</div>
               </div>
+              <div className="bg-white/90 rounded-xl px-3.5 py-1.5 shadow-lg text-right">
+                <div className="text-[9px] tracking-[0.2em] font-bold text-slate-500">STARS EARNED</div>
+                <div className="text-lg font-extrabold text-[#0f1b33]">
+                  <span className="text-amber-400">⭐</span> {hud?.starsEarned ?? 0} / {hud?.maxStars ?? 5}
+                </div>
+              </div>
+              {!isSubway && (
+                <div className="bg-[#0f1b33]/90 rounded-xl px-3.5 py-1.5 shadow-lg text-right">
+                  <div className="text-[9px] tracking-[0.2em] font-bold text-cyan-300/80">DISTANCE</div>
+                  <div className="text-base font-extrabold text-white">📍 {telemetry.distanceM}m</div>
+                </div>
+              )}
             </div>
+            {!isSubway && (
+              <div className="rounded-xl bg-[#0f1b33]/90 shadow-lg pt-1.5 pb-0.5 px-1">
+                <SpeedGauge kmh={telemetry.speedKmh} />
+              </div>
+            )}
           </div>
         </div>
 
@@ -586,6 +662,40 @@ export default function Race() {
           )}
         </AnimatePresence>
 
+        {/* Camera / headlight / pause controls — racing mode only */}
+        {!isSubway && (
+          <div className="absolute bottom-24 md:bottom-28 right-4 md:right-6 z-20 flex flex-col gap-2.5 pointer-events-auto">
+            <button
+              onClick={toggleCockpit}
+              aria-label="Toggle inside/outside view"
+              title={cockpitView ? 'Switch to outside view' : 'Switch to inside view'}
+              className={`w-11 h-11 md:w-12 md:h-12 rounded-full grid place-items-center text-xl shadow-lg border transition ${
+                cockpitView ? 'bg-cyan-400 border-cyan-200 text-[#031018]' : 'bg-[#0f1b33]/85 border-white/15 text-white'
+              }`}
+            >
+              🎥
+            </button>
+            <button
+              onClick={toggleHeadlights}
+              aria-label="Toggle headlights"
+              title="Toggle headlights"
+              className={`w-11 h-11 md:w-12 md:h-12 rounded-full grid place-items-center text-xl shadow-lg border transition ${
+                headlightsOn ? 'bg-amber-300 border-amber-100 text-[#031018]' : 'bg-[#0f1b33]/85 border-white/15 text-white'
+              }`}
+            >
+              💡
+            </button>
+            <button
+              onClick={togglePause}
+              aria-label={paused ? 'Resume' : 'Pause'}
+              title={paused ? 'Resume' : 'Pause'}
+              className="w-11 h-11 md:w-12 md:h-12 rounded-full grid place-items-center text-xl shadow-lg border border-white/15 bg-[#0f1b33]/85 text-white"
+            >
+              {paused ? '▶️' : '⏸️'}
+            </button>
+          </div>
+        )}
+
         <div className="flex-1" />
 
         {/* Bottom corners: feedback (left) + accessory unlocked (right) */}
@@ -686,6 +796,24 @@ export default function Race() {
             className="absolute top-20 left-1/2 -translate-x-1/2 z-30 bg-red-600/90 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-lg"
           >
             ⚠️ {raceError}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Pause overlay */}
+      <AnimatePresence>
+        {paused && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-30 grid place-items-center bg-black/60 backdrop-blur-sm"
+          >
+            <div className="glass rounded-3xl px-10 py-8 text-center">
+              <div className="text-5xl mb-3">⏸️</div>
+              <div className="text-white text-2xl font-black tracking-wide mb-4">PAUSED</div>
+              <button onClick={togglePause} className="btn-primary px-8">▶️ Resume</button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

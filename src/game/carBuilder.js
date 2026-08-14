@@ -1,9 +1,70 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Shared car mesh builder — extracted from ThreeRaceScene.js so the live race
 // scene AND the pre-race 3D car-preview scene (ThreeCarPreviewScene.js) render
 // the exact same car from one place. Pure geometry/materials, no scene/physics
 // state — callers own placement, animation and disposal.
+//
+// Real car models (optional): drop a .glb at public/models/car-<designId>.glb
+// (e.g. car-apex.glb) for that one design, or public/models/car.glb to cover
+// every design, and it's picked up automatically — same "async load, graceful
+// fallback to the procedural version" pattern the runner/trees already use in
+// ThreeSubwayScene.js. It only ever replaces the outer body shell (chassis/
+// cabin/bumpers/skirts) — wheels, flames/smoke, wing + name plate, and the
+// driver figure stay exactly where they are, in the same car-local
+// coordinates, so nothing else needs to know or care which body is in use.
+// See public/models/CREDITS.txt.
+const modelCache = {};
+function loadRealCarModel(carDesignId) {
+  const key = carDesignId || 'default';
+  if (!modelCache[key]) {
+    const base = import.meta.env.BASE_URL;
+    modelCache[key] = new Promise((resolve) => {
+      const tryLoad = (url, fallbackUrl) => {
+        new GLTFLoader().load(
+          url,
+          (gltf) => resolve(gltf.scene),
+          undefined,
+          () => (fallbackUrl ? tryLoad(fallbackUrl, null) : resolve(null)),
+        );
+      };
+      tryLoad(`${base}models/car-${key}.glb`, `${base}models/car.glb`);
+    });
+  }
+  return modelCache[key];
+}
+
+// Swaps a loaded real model in as the car's body shell, once/if it loads.
+// Fires and forgets — buildCar() calls this without awaiting it, exactly like
+// loadRunnerModel()/loadTrees() do, so the procedural car renders instantly
+// and the real one (if any) pops in a moment later.
+function loadRealCarBody(car, cfg, bodyMeshes, chLen) {
+  loadRealCarModel(cfg.id).then((scene) => {
+    if (!scene) return; // no file at either URL — procedural body stays
+    const model = scene.clone(true);
+    model.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+    // normalise: fit its length (Z) to the procedural chassis length, centre
+    // it, and drop it so its lowest point sits on the ground (y=0)
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    if (size.z > 0.01) model.scale.multiplyScalar(chLen / size.z);
+    const box2 = new THREE.Box3().setFromObject(model);
+    const center = new THREE.Vector3();
+    box2.getCenter(center);
+    model.position.x -= center.x;
+    model.position.z -= center.z;
+    model.position.y -= box2.min.y;
+    bodyMeshes.forEach((m) => (m.visible = false)); // hide the procedural shell; keep it (cheap, no rebuild needed if this ever needs reverting)
+    car.add(model);
+  });
+}
 
 // Driver colours per avatar — same palette the old Phaser kart used. The car's
 // own paint/brand identity now comes from CAR_DESIGNS (the player's chosen
@@ -94,11 +155,12 @@ function namePlateTexture(name) {
 // in-race flame/smoke/boost feedback all keep working unmodified regardless
 // of which car is equipped.
 function buildBody(car, cfg, parts) {
+  const bodyStartIdx = car.children.length; // everything added below, minus tail/name plate, is "the body shell" a real model can replace
   const bodyMat = new THREE.MeshStandardMaterial({ color: cfg.paint, roughness: 0.25, metalness: 0.55 });
   const accentMat = new THREE.MeshStandardMaterial({ color: cfg.accent, roughness: 0.35, metalness: 0.3 });
   const darkMat = new THREE.MeshStandardMaterial({ color: cfg.dark, roughness: 0.55, metalness: 0.3 });
   const chromeMat = new THREE.MeshStandardMaterial({ color: 0xd7dde6, roughness: 0.15, metalness: 0.95 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: 0x1a2230, roughness: 0.1, metalness: 0.4, transparent: true, opacity: 0.75 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x1a2230, roughness: 0.1, metalness: 0.4, transparent: true, opacity: 0.32 });
   const trimMat = cfg.chrome ? chromeMat : darkMat;
   const y0 = 0.28 + cfg.rideHeight; // ground clearance
   const w = cfg.width;
@@ -145,13 +207,14 @@ function buildBody(car, cfg, parts) {
   const grille = new THREE.Mesh(new THREE.BoxGeometry(w * 0.5, chH * 0.4, 0.06), darkMat);
   grille.position.set(0, y0 + chH * 0.4, frontZ - 0.22);
   car.add(grille);
-  [-1, 1].forEach((s) => {
+  const headlights = [-1, 1].map((s) => {
     const light = new THREE.Mesh(
       new THREE.BoxGeometry(0.18, 0.1, 0.06),
       new THREE.MeshStandardMaterial({ color: 0xfff8e0, emissive: 0xfff2b8, emissiveIntensity: 0.9 }),
     );
     light.position.set(s * w * 0.36, y0 + chH * 0.55, frontZ - 0.22);
     car.add(light);
+    return light;
   });
   const rearBumper = new THREE.Mesh(new THREE.BoxGeometry(w * 1.0, chH * 0.5, 0.26), trimMat);
   rearBumper.position.set(0, y0 + chH * 0.28, rearZ + 0.1);
@@ -214,7 +277,11 @@ function buildBody(car, cfg, parts) {
   namePlate.position.set(0, parts.namePlateY, rearZ + 0.14);
   car.add(namePlate);
 
-  return { bodyMat, accentMat, darkMat, chromeMat, y0, chTop, frontZ, rearZ };
+  // everything just added except the tail light + name plate (both stay
+  // visible even with a real model swapped in) is the replaceable body shell
+  const bodyMeshes = car.children.slice(bodyStartIdx).filter((o) => o !== tail && o !== namePlate);
+
+  return { bodyMat, accentMat, darkMat, chromeMat, y0, chTop, chLen, frontZ, rearZ, bodyMeshes, headlights };
 }
 
 // Builds a car (one of CAR_DESIGNS) at the origin, with the chosen avatar's
@@ -239,7 +306,11 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
     namePlateTexture: namePlateTexture((avatarName || 'ALEX').toUpperCase().slice(0, 10)),
   };
 
-  const { bodyMat, darkMat, y0 } = buildBody(car, cfg, parts);
+  const { bodyMat, darkMat, y0, chLen, bodyMeshes, windshield, headlights } = buildBody(car, cfg, parts);
+  loadRealCarBody(car, cfg, bodyMeshes, chLen); // async — swaps in a real model if one's been dropped in public/models/
+  parts.windshield = windshield; // hidden in cockpit view so it doesn't tint out the driver's own view
+  parts.headlights = headlights; // toggled on/off via the HUD's headlight button
+  parts.eyePoint = { y: y0 + 1.05, z: -0.28 }; // cockpit-camera eye position, car-local (driver head height)
 
   // ── the driver — visible in the open cockpit (avatar suit + helmet) ──
   const suitMat = new THREE.MeshStandardMaterial({ color: driver.suit, roughness: 0.8 });
@@ -266,6 +337,7 @@ export function buildCar({ avatarKey = 'alex', avatarName = 'ALEX', accessorySlo
   );
   stripe.position.set(0, y0 + 1.22, -0.28);
   car.add(stripe);
+  parts.driverParts = [shoulders, neck, helmet, stripe]; // hidden in cockpit view — the camera IS the driver now
 
   // wheels (sized per design) + axles
   const r = cfg.wheelR;

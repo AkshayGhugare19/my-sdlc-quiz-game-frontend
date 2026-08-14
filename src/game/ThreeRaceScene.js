@@ -218,6 +218,9 @@ export default class ThreeRaceScene {
     this.parked = false; // true while stopped on the road at a checkpoint, answering
     this.manualThrottle = 1; // player-controlled cruise level while driving (↑/↓ keys)
     this.throttleInput = 0; // -1 (↓ held) / 0 / 1 (↑ held) — see setThrottleInput()
+    this.viewMode = 'chase'; // 'chase' (outside, default) | 'cockpit' (inside) — see setViewMode()
+    this.paused = false;
+    this._telemetryAccum = 0;
 
     this.roadW = laneCount * LANE_W + 1.6;
     this.parkX = this.roadW / 2 + 2.6; // roadside checkpoint sign lane, right shoulder (decorative only)
@@ -494,12 +497,44 @@ export default class ThreeRaceScene {
     this.wingParts = parts.wingParts;
     this.trailMesh = parts.trailMesh;
     this.specialGem = parts.specialGem;
+    this.driverParts = parts.driverParts; // hidden in cockpit view — the camera IS the driver
+    this.windshield = parts.windshield;
+    this.eyePoint = parts.eyePoint; // car-local {y,z} — where the cockpit camera sits
+    this.headlights = parts.headlights;
+    this.headlightsOn = false;
 
     const { point, tangent, right } = sampleTrack(this.curve, 0);
     parts.car.position.set(point.x + right.x * this.lateralOffset, 0, point.z + right.z * this.lateralOffset);
     parts.car.rotation.y = headingAngle(tangent);
     this.car = parts.car;
     this.scene.add(this.car);
+
+    this.buildCockpitProps();
+  }
+
+  // A steering wheel + dashboard rim, parented to the camera itself so it
+  // always sits in the same spot on screen — the classic cheap way to fake an
+  // interior view without building a real cockpit model. Only shown in
+  // 'cockpit' viewMode (see setViewMode()/toggleView()).
+  buildCockpitProps() {
+    const g = new THREE.Group();
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x1b1f27, roughness: 0.6, metalness: 0.3 });
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x14171d, roughness: 0.5, metalness: 0.4 });
+    const dash = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.22, 0.5), trimMat);
+    dash.position.set(0, -0.42, -0.85);
+    g.add(dash);
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 10, 24), wheelMat);
+    wheel.position.set(0, -0.32, -0.62);
+    wheel.rotation.x = Math.PI / 2.35;
+    g.add(wheel);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.05, 12), wheelMat);
+    hub.position.copy(wheel.position);
+    hub.rotation.x = wheel.rotation.x;
+    g.add(hub);
+    g.visible = false;
+    this.camera.add(g);
+    this.scene.add(this.camera); // camera must be in the scene graph for its children to render
+    this.cockpitProps = g;
   }
 
   laneX(i) {
@@ -519,6 +554,10 @@ export default class ThreeRaceScene {
   }
 
   update(dt) {
+    if (this.paused) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
     this.elapsed += dt;
 
     // speed: full stop during answer feedback or while stopped at a checkpoint
@@ -608,38 +647,48 @@ export default class ThreeRaceScene {
       p.material.opacity = 0.55 * (1 - t);
     });
 
-    // camera: chase the car ALONG THE CURVE (sampled slightly behind/ahead of
-    // it, not a fixed world-space offset), so it stays on the road through
-    // bends instead of cutting across the infield. FOV widens with speed,
-    // shake decays; both camera position and look-at ease toward their
-    // targets so bends don't whip the view around.
+    // camera: either the usual chase cam (sampled slightly behind/ahead of
+    // the car along THE CURVE, not a fixed world-space offset, so it stays on
+    // the road through bends instead of cutting across the infield) or, in
+    // 'cockpit' viewMode, rigidly glued to the driver's eye point — see
+    // setViewMode()/toggleView(). FOV widens with speed, shake decays; the
+    // chase cam's position/look-at ease toward their targets so bends don't
+    // whip the view around.
     this.shake = Math.max(0, this.shake - dt * 2.2);
     const shx = (Math.random() - 0.5) * this.shake * 0.5;
     const shy = (Math.random() - 0.5) * this.shake * 0.35;
-    const lateralBias = this.lateralOffset * 0.6;
-    const behind = sampleTrack(this.curve, (this.distTraveled - CAM_BEHIND) / this.totalLength);
-    const ahead = sampleTrack(this.curve, (this.distTraveled + CAM_AHEAD) / this.totalLength);
-    const camTarget = new THREE.Vector3(
-      behind.point.x + behind.right.x * lateralBias,
-      5.2,
-      behind.point.z + behind.right.z * lateralBias,
-    );
-    const lookTarget = new THREE.Vector3(
-      ahead.point.x + ahead.right.x * lateralBias * 0.85,
-      0.3,
-      ahead.point.z + ahead.right.z * lateralBias * 0.85,
-    );
-    if (this._camInit) {
-      this.camPos.lerp(camTarget, Math.min(1, dt * 5));
-      this.camLookAt.lerp(lookTarget, Math.min(1, dt * 5));
+
+    if (this.viewMode === 'cockpit') {
+      const eye = new THREE.Vector3(0, this.eyePoint.y, this.eyePoint.z).applyQuaternion(this.car.quaternion).add(this.car.position);
+      this.camera.position.copy(eye);
+      this.camera.quaternion.copy(this.car.quaternion);
+      this._camInit = false; // re-init the chase cam cleanly if the player switches back
     } else {
-      this.camPos.copy(camTarget);
-      this.camLookAt.copy(lookTarget);
-      this._camInit = true;
+      const lateralBias = this.lateralOffset * 0.6;
+      const behind = sampleTrack(this.curve, (this.distTraveled - CAM_BEHIND) / this.totalLength);
+      const ahead = sampleTrack(this.curve, (this.distTraveled + CAM_AHEAD) / this.totalLength);
+      const camTarget = new THREE.Vector3(
+        behind.point.x + behind.right.x * lateralBias,
+        5.2,
+        behind.point.z + behind.right.z * lateralBias,
+      );
+      const lookTarget = new THREE.Vector3(
+        ahead.point.x + ahead.right.x * lateralBias * 0.85,
+        0.3,
+        ahead.point.z + ahead.right.z * lateralBias * 0.85,
+      );
+      if (this._camInit) {
+        this.camPos.lerp(camTarget, Math.min(1, dt * 5));
+        this.camLookAt.lerp(lookTarget, Math.min(1, dt * 5));
+      } else {
+        this.camPos.copy(camTarget);
+        this.camLookAt.copy(lookTarget);
+        this._camInit = true;
+      }
+      this.camera.position.copy(this.camPos);
+      this.camera.lookAt(this.camLookAt);
     }
-    this.camera.position.copy(this.camPos);
-    this.camera.lookAt(this.camLookAt);
-    const fovTarget = this.baseFov + this.speed * 6;
+    const fovTarget = this.baseFov + this.speed * (this.viewMode === 'cockpit' ? 3 : 6);
     this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, dt * 4);
     this.camera.updateProjectionMatrix();
 
@@ -665,12 +714,55 @@ export default class ThreeRaceScene {
     this.camera.position.x += shx;
     this.camera.position.y += shy;
 
+    // live telemetry for the HUD (speedometer + distance readout) — real
+    // numbers off the same speed/distance the scene itself drives with, just
+    // throttled to ~8Hz so it doesn't force a React re-render every frame
+    this._telemetryAccum += dt;
+    if (this.onTelemetry && this._telemetryAccum >= 0.12) {
+      this._telemetryAccum = 0;
+      this.onTelemetry({
+        speedKmh: Math.round(this.speed * WORLD_SPEED * 3.6),
+        distanceM: Math.round(this.distTraveled),
+      });
+    }
+
     this.renderer.render(this.scene, this.camera);
   }
 
   // ── imperative API (same contract as the old Phaser scene) ────────────────
   steerTo(lane) {
     this.currentLane = THREE.MathUtils.clamp(lane, 0, this.laneCount - 1);
+  }
+
+  // Inside/outside camera toggle. 'cockpit' hides the driver figure + tints
+  // down the windshield (the camera IS the driver's eyes now) and shows the
+  // steering-wheel/dash props built in buildCockpitProps(); 'chase' is the
+  // usual third-person view. Race.jsx drives this from a HUD button.
+  setViewMode(mode) {
+    this.viewMode = mode === 'cockpit' ? 'cockpit' : 'chase';
+    const inCockpit = this.viewMode === 'cockpit';
+    this.driverParts?.forEach((p) => (p.visible = !inCockpit));
+    if (this.windshield) this.windshield.visible = !inCockpit;
+    if (this.cockpitProps) this.cockpitProps.visible = inCockpit;
+  }
+
+  toggleView() {
+    this.setViewMode(this.viewMode === 'cockpit' ? 'chase' : 'cockpit');
+  }
+
+  // Headlight on/off toggle — HUD flavor button, purely visual (brightens the
+  // headlight emissive; the fixed sunset lighting means this reads as more of
+  // a "high beam" accent than a real day/night change).
+  toggleHeadlights() {
+    this.headlightsOn = !this.headlightsOn;
+    this.headlights?.forEach((h) => (h.material.emissiveIntensity = this.headlightsOn ? 2.4 : 0.9));
+    return this.headlightsOn;
+  }
+
+  // True pause — freezes the whole sim (still renders the current frame), for
+  // the HUD's pause button.
+  setPaused(paused) {
+    this.paused = paused;
   }
 
   startRacing() {
