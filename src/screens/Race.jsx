@@ -6,7 +6,9 @@ import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
 import BackButton from '../components/BackButton';
 import GameChoiceModal from '../components/GameChoiceModal';
+import UnityRaceFrame from '../components/UnityRaceFrame';
 import CarPreview from './CarPreview';
+import { USE_UNITY_RACE } from '../config/unityRace';
 import { accessoryIcon } from '../accessoryIcons';
 
 // Cosmetic-only pacing for the "drive between checkpoints" beat — no backend
@@ -109,6 +111,12 @@ export default function Race() {
   const carDesign = useGameStore((s) => s.carDesign);
   const setCarDesign = useGameStore((s) => s.setCarDesign);
   const [gameChoice, setGameChoice] = useState(null);
+  // Escape hatch off the embedded Unity build for this run only (offered when
+  // the handoff/iframe fails) — drops back to the in-repo three.js circuit.
+  const [forceClassic, setForceClassic] = useState(false);
+  // Racing now plays inside the hosted Unity WebGL build; the three.js path
+  // below is untouched and comes back by flipping USE_UNITY_RACE.
+  const playInUnity = USE_UNITY_RACE && gameChoice === 'racing' && !forceClassic;
   // Every equipped accessory (one per slot) — all of them are shown on the kart.
   const equippedList = (player?.garage || [])
     .filter((g) => g.isEquipped)
@@ -183,6 +191,9 @@ export default function Race() {
     // Wait for the game choice — the server session (and its mission clock)
     // shouldn't start ticking while the player is still on the choice screen.
     if (!gameChoice) return;
+    // The Unity build runs its own session end-to-end; booting one here too
+    // would start a second, orphaned attempt with its clock already running.
+    if (playInUnity) return;
     startRace(isTournamentRace || isQuickRace ? null : missionId, avatar?.id, bundleId, { quick: isQuickRace })
       .then((s) => {
         sessionRef.current = s;
@@ -199,7 +210,7 @@ export default function Race() {
       // Send the reason back to the hub so the player knows what went wrong.
       // replace: the broken race must not stay in history (back would restart it).
       .catch((e) => navigate('/hub', { state: { error: e.message }, replace: true }));
-  }, [missionId, bundleId, gameChoice]); // eslint-disable-line
+  }, [missionId, bundleId, gameChoice, playInUnity]); // eslint-disable-line
 
   // Racing mode pauses on the car-preview showcase before the countdown;
   // Subway Surfer has no car to preview, so it's ready as soon as it's chosen.
@@ -411,6 +422,25 @@ export default function Race() {
           setGameChoice(g);
           setGameType(g); // remember it as the default for next time
         }}
+      />
+    );
+  }
+
+  // Racing → the hosted Unity WebGL build in an iframe. UnityRaceFrame mints the
+  // one-time handoff code and hands it over in the URL, so the Unity side can
+  // exchange it for its own token instead of reading our sessionStorage. This
+  // sits ahead of the car showcase + three.js scene, which stay below as the
+  // backup path (USE_UNITY_RACE=false, or "Play the classic race" on failure).
+  if (playInUnity) {
+    return (
+      <UnityRaceFrame
+        title={boot?.mission?.title || 'Racing'}
+        onQuit={() => {
+          if (window.confirm('Quit this race? Your progress in this race will be lost.')) {
+            navigate(isTournamentRace || isQuickRace ? '/dashboard' : '/hub');
+          }
+        }}
+        onFallback={() => setForceClassic(true)}
       />
     );
   }

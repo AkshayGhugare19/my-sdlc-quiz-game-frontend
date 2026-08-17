@@ -41,6 +41,13 @@ export const api = {
   register: (payload) => http.post('/auth/game/register', payload),
   organizations: () => http.get('/auth/game/organizations'), // public — for signup
   me: () => http.get('/auth/me'),
+  // One-time code that hands this signed-in session to the embedded Unity build.
+  // Our access token lives in sessionStorage, which the cross-origin iframe can't
+  // read — so we mint a short-lived code, put THAT in the iframe URL, and the
+  // Unity side trades it for its own tokens. Returns { code, expiresAt,
+  // expiresInSec, gameUrl }. Call it immediately before setting iframe.src: the
+  // code expires ~2 minutes after minting.
+  createHandoff: () => http.post('/auth/handoff'),
 
   // ── Player profile / HUD / dashboard ──
   profile: () => http.get('/play/me'),
