@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import gameBanner from '../assets/game/game_banner.png';
+import gameBanner from '../assets/game/gamebanner.png';
+import gameCarRacing from '../assets/game/carracing.png';
+import gameSubwaySuffer from '../assets/game/subwaysuffer.png';
 import gameBg from '../assets/game/game_bg.png';
 
 // Pre-race prompt: pick which game to answer the quiz in. Shown by Race.jsx
@@ -102,6 +104,7 @@ const GAMES = [
     key: 'racing-car',
     name: 'Racing Car',
     tagline: 'Steer a race car down a sunset circuit',
+    image: gameCarRacing,
     chips: ['🏎️ Race car', '🛣️ Road & lanes', '🏁 Grand-prix vibe'],
     Art: RacingArt,
     accent: '#f59e0b',
@@ -111,6 +114,7 @@ const GAMES = [
     key: 'subway',
     name: 'Subway Surfer',
     tagline: 'Sprint the train tracks through the city',
+    image: gameSubwaySuffer,
     chips: ['🏃 Track runner', '🚉 Stations & trains', '🌆 City & bridges'],
     Art: SubwayArt,
     accent: '#22d3ee',
