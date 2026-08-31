@@ -6,8 +6,15 @@ import ThreeCarPreviewScene from './ThreeCarPreviewScene';
 // All three scenes implement the identical imperative contract (constructor
 // shape, onLaneLayout, setLane, startRacing/applyQuestion/playFeedback/
 // resetSigns/destroy — the preview scene's are no-ops), so the Race/CarPreview
-// screens drive whichever one they're given interchangeably.
-const SCENES = { racing: ThreeRaceScene, subway: ThreeSubwayScene, preview: ThreeCarPreviewScene };
+// screens drive whichever one they're given interchangeably. 'racing-car' (the
+// "2D Games" section's car game) reuses the same three.js circuit as 'racing'
+// — it just never goes through the Unity iframe (see config/unityRace.js).
+const SCENES = {
+  racing: ThreeRaceScene,
+  'racing-car': ThreeRaceScene,
+  subway: ThreeSubwayScene,
+  preview: ThreeCarPreviewScene,
+};
 
 // Minimal event emitter — replaces Phaser.Events.EventEmitter for the one
 // 'setLane' channel the Race screen uses, without pulling Phaser in.

@@ -6,6 +6,7 @@ import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
 import BackButton from '../components/BackButton';
 import GameChoiceModal from '../components/GameChoiceModal';
+import PillarQuizGate from '../components/PillarQuizGate';
 import UnityRaceFrame from '../components/UnityRaceFrame';
 import CarPreview from './CarPreview';
 import { USE_UNITY_RACE } from '../config/unityRace';
@@ -111,6 +112,10 @@ export default function Race() {
   const carDesign = useGameStore((s) => s.carDesign);
   const setCarDesign = useGameStore((s) => s.setCarDesign);
   const [gameChoice, setGameChoice] = useState(null);
+  // Pillar warm-up quiz (external iframe) shown ahead of game selection for
+  // every entry point except Quick Race — see the gate right before
+  // GameChoiceModal below.
+  const [quizGateDone, setQuizGateDone] = useState(false);
   // Escape hatch off the embedded Unity build for this run only (offered when
   // the handoff/iframe fails) — drops back to the in-repo three.js circuit.
   const [forceClassic, setForceClassic] = useState(false);
@@ -160,9 +165,9 @@ export default function Race() {
   const [countdown, setCountdown] = useState(3);
   const [racing, setRacing] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Pre-race NFS-style car showcase — shown for Racing mode only, ahead of the
-  // 3‑2‑1‑GO countdown. Subway Surfer has no car to preview, so it skips straight
-  // to racing (readyToRace below).
+  // Pre-race NFS-style car showcase — shown for Racing/RacingCar modes only,
+  // ahead of the 3‑2‑1‑GO countdown. Subway Surfer has no car to preview, so
+  // it skips straight to racing (readyToRace below).
   const [previewDone, setPreviewDone] = useState(false);
   // Checkpoint gating: the question banner/answer cards + input only appear
   // while parked at a checkpoint; between checkpoints the car just drives.
@@ -212,8 +217,12 @@ export default function Race() {
       .catch((e) => navigate('/hub', { state: { error: e.message }, replace: true }));
   }, [missionId, bundleId, gameChoice, playInUnity]); // eslint-disable-line
 
-  // Racing mode pauses on the car-preview showcase before the countdown;
-  // Subway Surfer has no car to preview, so it's ready as soon as it's chosen.
+  // Racing/RacingCar modes pause on the car-preview showcase before the
+  // countdown; Subway Surfer has no car to preview, so it's ready as soon as
+  // it's chosen. Bug fix: 'racing-car' used to match neither branch here
+  // (only 'racing' was checked below), so previewDone never flipped and the
+  // countdown/race never started — see isCarPreviewGame below.
+  const isCarPreviewGame = gameChoice === 'racing' || gameChoice === 'racing-car';
   const readyToRace = gameChoice === 'subway' || previewDone;
 
   // 2. Countdown 3-2-1-GO — only once the player is past the pre-race gates
@@ -411,10 +420,19 @@ export default function Race() {
     };
   }, [racing, busy, paused, selected, lanes, chooseLane, commit]);
 
-  // Pre-race prompt: choose Racing or Subway Surfer before anything boots. This
-  // gate sits ahead of every entry point (mission / course / bundle / quick /
-  // tournament / replay) because they all funnel through this one screen.
+  // Pre-race prompt: choose a game before anything boots. This gate sits ahead
+  // of every entry point (mission / course / bundle / quick / tournament /
+  // replay) because they all funnel through this one screen. Every entry point
+  // except Quick Race first shows the pillar warm-up quiz (external iframe).
   if (!gameChoice) {
+    if (!isQuickRace && !quizGateDone) {
+      return (
+        <PillarQuizGate
+          onNext={() => setQuizGateDone(true)}
+          onBack={() => navigate(-1)}
+        />
+      );
+    }
     return (
       <GameChoiceModal
         defaultGame={gameType}
@@ -445,10 +463,10 @@ export default function Race() {
     );
   }
 
-  // Racing-mode pre-race showcase: rotate the car, see gear, then Start Race.
-  // The session (boot) keeps loading behind this screen exactly as before —
-  // this just delays showing the countdown/race UI.
-  if (gameChoice === 'racing' && !previewDone) {
+  // Racing/RacingCar pre-race showcase: rotate the car, see gear, then Start
+  // Race. The session (boot) keeps loading behind this screen exactly as
+  // before — this just delays showing the countdown/race UI.
+  if (isCarPreviewGame && !previewDone) {
     return (
       <CarPreview
         avatarKey={avatar?.key}

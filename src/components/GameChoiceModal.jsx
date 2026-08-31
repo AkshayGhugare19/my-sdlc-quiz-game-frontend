@@ -3,11 +3,45 @@ import { motion, AnimatePresence } from 'framer-motion';
 import gameBanner from '../assets/game/game_banner.png';
 import gameBg from '../assets/game/game_bg.png';
 
-// Pre-race prompt: pick which 3D game to answer the quiz in. Shown by Race.jsx
-// before any mission / course / tournament / quick race boots. Subway Surfer is
-// currently hidden (see GAMES below), so Racing is the only selectable world.
+// Pre-race prompt: pick which game to answer the quiz in. Shown by Race.jsx
+// before any mission / course / tournament / quick race boots (after the
+// pillar-quiz iframe gate, for every entry point except Quick Race). Games are
+// grouped into a "2D Games" section (Car Game, Subway Surfer — both run the
+// in-repo three.js engine) and a "3D Game" section (Racing — the hosted Unity
+// build, or the three.js circuit as its backup).
 // Same dark NFS-showroom look as CarPreview.jsx/Result.jsx, so the whole
 // pre-race → race → post-race flow reads as one continuous presentation.
+
+function RacingArt() {
+  return (
+    <svg viewBox="0 0 220 130" className="w-full h-full" aria-hidden>
+      <defs>
+        <linearGradient id="rsky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#6ea8dd" />
+          <stop offset="0.6" stopColor="#bcd9ee" />
+          <stop offset="1" stopColor="#f6cf9e" />
+        </linearGradient>
+      </defs>
+      <rect width="220" height="130" fill="url(#rsky)" />
+      <circle cx="60" cy="40" r="16" fill="#fff6dc" opacity="0.9" />
+      {/* road */}
+      <polygon points="70,130 150,130 128,48 92,48" fill="#565b66" />
+      <polygon points="108,48 112,48 116,130 104,130" fill="#f2f5f8" opacity="0.9" />
+      {[62, 80, 104].map((y, i) => (
+        <rect key={i} x="109" y={y} width="3" height="9" fill="#fff" opacity="0.85" />
+      ))}
+      {/* car (rear view) */}
+      <g transform="translate(110,104)">
+        <ellipse cx="0" cy="16" rx="26" ry="5" fill="#0f1b33" opacity="0.25" />
+        <rect x="-18" y="-6" width="36" height="20" rx="4" fill="#e11d48" />
+        <rect x="-22" y="8" width="44" height="6" rx="3" fill="#14181f" />
+        <rect x="-12" y="-14" width="24" height="10" rx="3" fill="#22d3ee" opacity="0.85" />
+        <circle cx="-14" cy="14" r="5" fill="#0c0e12" />
+        <circle cx="14" cy="14" r="5" fill="#0c0e12" />
+      </g>
+    </svg>
+  );
+}
 
 // A tiny procedural preview of the subway track runner.
 function SubwayArt() {
@@ -53,6 +87,8 @@ function SubwayArt() {
 
 // `hidden: true` keeps a game defined but off the picker — the mode still works
 // everywhere else (Race.jsx, the store), it just can't be chosen here.
+// `category` only drives which section of this screen a card renders in — it
+// doesn't touch Race.jsx's routing (that still switches on `key`).
 const GAMES = [
   {
     key: 'racing',
@@ -60,6 +96,16 @@ const GAMES = [
     tagline: 'Steer a race car down a sunset circuit',
     image: gameBanner,
     accent: '#f43f5e',
+    category: '3d',
+  },
+  {
+    key: 'racing-car',
+    name: 'RacingCar',
+    tagline: 'Steer a race car down a sunset circuit',
+    chips: ['🏎️ Race car', '🛣️ Road & lanes', '🏁 Grand-prix vibe'],
+    Art: RacingArt,
+    accent: '#f59e0b',
+    category: '2d',
   },
   {
     key: 'subway',
@@ -68,18 +114,80 @@ const GAMES = [
     chips: ['🏃 Track runner', '🚉 Stations & trains', '🌆 City & bridges'],
     Art: SubwayArt,
     accent: '#22d3ee',
-    hidden: true,
+    category: '2d',
   },
 ];
 
 const VISIBLE_GAMES = GAMES.filter((g) => !g.hidden);
+const GAMES_2D = VISIBLE_GAMES.filter((g) => g.category === '2d');
+const GAMES_3D = VISIBLE_GAMES.filter((g) => g.category === '3d');
+
+// One selectable game card — used by both the 2D and 3D sections below.
+function GameCard({ game, isSel, onSelect, onStart }) {
+  const { name, tagline, chips, image, Art, accent } = game;
+  return (
+    <motion.button
+      whileHover={{ scale: 1.02, y: -3 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={onSelect}
+      onDoubleClick={onStart}
+      className="text-left rounded-2xl overflow-hidden border-2 transition bg-black/40 w-full"
+      style={{
+        borderColor: isSel ? accent : 'rgba(255,255,255,0.12)',
+        boxShadow: isSel ? `0 0 0 3px ${accent}33, 0 18px 34px rgba(2,8,20,0.5)` : '0 10px 24px rgba(2,8,20,0.35)',
+      }}
+    >
+      <div className="h-32 md:h-36 w-full relative">
+        {image ? <img src={image} alt="" className="w-full h-full object-cover" /> : <Art />}
+        <div className="absolute inset-0" style={{ boxShadow: 'inset 0 -18px 22px -6px rgba(0,0,0,0.35)' }} />
+      </div>
+      <div className="p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-extrabold text-white uppercase tracking-wide">{name}</h2>
+          <span
+            className="w-6 h-6 rounded-full grid place-items-center text-white text-sm font-black transition shrink-0"
+            style={{ background: isSel ? accent : 'rgba(255,255,255,0.12)' }}
+          >
+            {isSel ? '✓' : ''}
+          </span>
+        </div>
+        <p className="text-white/50 text-sm font-medium mt-0.5">{tagline}</p>
+        {chips?.length ? (
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {chips.map((c) => (
+              <span key={c} className="text-[11px] font-semibold text-white/70 bg-white/5 border border-white/10 rounded-full px-2.5 py-1">
+                {c}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </motion.button>
+  );
+}
+
+// Small section heading with a pill badge (2D/3D) and a divider rule, so the
+// two categories read as clearly separate groups rather than one long grid.
+function SectionHeading({ badge, title, sub }) {
+  return (
+    <div className="flex items-center gap-3 mb-3">
+      <span className="text-[10px] font-black tracking-[0.2em] text-[#031018] bg-cyan-300 rounded-full px-2.5 py-1">
+        {badge}
+      </span>
+      <div>
+        <h3 className="text-white font-extrabold uppercase tracking-wide text-sm leading-none">{title}</h3>
+        <p className="text-white/40 text-xs font-medium mt-0.5">{sub}</p>
+      </div>
+      <div className="flex-1 h-px bg-white/10" />
+    </div>
+  );
+}
 
 export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
   // A remembered choice that is now hidden falls back to the first visible game.
   const [selected, setSelected] = useState(
     VISIBLE_GAMES.some((g) => g.key === defaultGame) ? defaultGame : VISIBLE_GAMES[0].key,
   );
-  const solo = VISIBLE_GAMES.length === 1;
 
   return (
     <AnimatePresence>
@@ -87,7 +195,7 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 overflow-hidden grid place-items-center p-4"
+        className="fixed inset-0 z-50 overflow-y-auto grid place-items-center p-4"
         style={{
           backgroundColor: '#05070d',
           backgroundImage: `url(${gameBg})`,
@@ -98,19 +206,19 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
       >
         {/* dark scrim over the artwork so the panel copy keeps its contrast */}
         <div
-          className="absolute inset-0 pointer-events-none"
+          className="fixed inset-0 pointer-events-none"
           style={{ background: 'radial-gradient(1200px 800px at 50% -10%, rgba(19,28,51,0.72) 0%, rgba(5,7,13,0.86) 55%, rgba(2,3,6,0.94) 100%)' }}
         />
         {/* faint carbon-fiber weave + sweeping light streak — same treatment as CarPreview/Result */}
         <div
-          className="absolute inset-0 opacity-40 pointer-events-none"
+          className="fixed inset-0 opacity-40 pointer-events-none"
           style={{
             backgroundImage:
               'repeating-linear-gradient(45deg, rgba(255,255,255,0.035) 0 2px, transparent 2px 6px), repeating-linear-gradient(-45deg, rgba(255,255,255,0.035) 0 2px, transparent 2px 6px)',
           }}
         />
         <motion.div
-          className="absolute inset-y-0 w-1/3 pointer-events-none"
+          className="fixed inset-y-0 w-1/3 pointer-events-none"
           style={{ background: 'linear-gradient(100deg, transparent, rgba(103,232,249,0.08), transparent)' }}
           initial={{ x: '-40vw' }}
           animate={{ x: '140vw' }}
@@ -121,7 +229,7 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
           initial={{ scale: 0.94, y: 16, opacity: 0 }}
           animate={{ scale: 1, y: 0, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-          className="relative z-10 w-full max-w-3xl rounded-3xl p-6 md:p-8 border border-white/10 bg-black/10 backdrop-blur-[2px] shadow-2xl"
+          className="relative z-10 w-full max-w-5xl my-6 rounded-3xl p-6 md:p-8 border border-white/10 bg-black/10 backdrop-blur-[2px] shadow-2xl"
         >
           <div className="text-center mb-6">
             <div className="inline-flex items-center gap-2 text-cyan-300 font-bold text-xs tracking-[0.3em] mb-2">
@@ -133,54 +241,36 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
             </p>
           </div>
 
-          <div className={`grid gap-4 md:gap-5 ${solo ? 'grid-cols-1 max-w-md mx-auto' : 'grid-cols-1 sm:grid-cols-2'}`}>
-            {VISIBLE_GAMES.map(({ key, name, tagline, chips, image, Art, accent }) => {
-              const isSel = selected === key;
-              return (
-                <motion.button
-                  key={key}
-                  whileHover={{ scale: 1.02, y: -3 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setSelected(key)}
-                  onDoubleClick={() => onChoose(key)}
-                  className="text-left rounded-2xl overflow-hidden border-2 transition bg-black/40"
-                  style={{
-                    borderColor: isSel ? accent : 'rgba(255,255,255,0.12)',
-                    boxShadow: isSel ? `0 0 0 3px ${accent}33, 0 18px 34px rgba(2,8,20,0.5)` : '0 10px 24px rgba(2,8,20,0.35)',
-                  }}
-                >
-                  <div className="h-32 md:h-36 w-full relative">
-                    {image ? (
-                      <img src={image} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <Art />
-                    )}
-                    <div className="absolute inset-0" style={{ boxShadow: 'inset 0 -18px 22px -6px rgba(0,0,0,0.35)' }} />
-                  </div>
-                  <div className="p-4">
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-lg font-extrabold text-white uppercase tracking-wide">{name}</h2>
-                      <span
-                        className="w-6 h-6 rounded-full grid place-items-center text-white text-sm font-black transition"
-                        style={{ background: isSel ? accent : 'rgba(255,255,255,0.12)' }}
-                      >
-                        {isSel ? '✓' : ''}
-                      </span>
-                    </div>
-                    <p className="text-white/50 text-sm font-medium mt-0.5">{tagline}</p>
-                    {chips?.length ? (
-                      <div className="flex flex-wrap gap-1.5 mt-3">
-                        {chips.map((c) => (
-                          <span key={c} className="text-[11px] font-semibold text-white/70 bg-white/5 border border-white/10 rounded-full px-2.5 py-1">
-                            {c}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </motion.button>
-              );
-            })}
+          <div className="space-y-6">
+            <section>
+              <SectionHeading badge="2D" title="2D Games" sub="Flat-track arcade runs, drawn in three.js" />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {GAMES_2D.map((game) => (
+                  <GameCard
+                    key={game.key}
+                    game={game}
+                    isSel={selected === game.key}
+                    onSelect={() => setSelected(game.key)}
+                    onStart={() => onChoose(game.key)}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionHeading badge="3D" title="3D Game" sub="Full circuit, real depth and camera angles" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {GAMES_3D.map((game) => (
+                  <GameCard
+                    key={game.key}
+                    game={game}
+                    isSel={selected === game.key}
+                    onSelect={() => setSelected(game.key)}
+                    onStart={() => onChoose(game.key)}
+                  />
+                ))}
+              </div>
+            </section>
           </div>
 
           <motion.button
