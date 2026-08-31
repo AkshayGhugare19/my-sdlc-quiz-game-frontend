@@ -5,6 +5,11 @@ import { useGameStore } from '../store/gameStore';
 import Garage from '../components/Garage';
 import BackButton from '../components/BackButton';
 import PillarQuizGate from '../components/PillarQuizGate';
+import pillar1 from '../assets/game/pillar1.png';
+import pillar2 from '../assets/game/pillar2.png';
+import pillar3 from '../assets/game/pillar3.png';
+import selectPillarBg from '../assets/game/selectpillarbg.png';
+import carImage from '../assets/game/carimage.png';
 
 // Emergency Management (the first pillar card) doesn't lead into a race at
 // all — it shows the warm-up video/iframe instead, and "completes" the pillar
@@ -27,162 +32,97 @@ function saveVideoDoneIds(ids) {
   }
 }
 
-// Screen 2 (choose pillar) + Screen 7 (hub progress). A "game world" scene:
-// hazy city skyline, neon grid floor, three glowing arch gates, and the
-// player's kart seen from behind. The scene keeps a fixed day-to-night look
-// in every theme, like the Phaser race canvas.
+// Screen 2 (choose pillar) + Screen 7 (hub progress). A bright day-time
+// street scene (selectpillarbg.png): hazy skyline, a road lined with trees,
+// three glowing stone arch gates (pillar1/2/3.png), and the player's kart
+// lined up at the start line.
 
-// Pillar accent theming, in mission order.
+// Pillar accent theming, in mission order. `frame` is the arch artwork for
+// that pillar; `blend: true` (pillar1 only — it ships on an opaque white
+// background, unlike pillar2/3 which are already transparent) uses
+// mix-blend-mode to drop the white out over the scene behind it.
 const PILLARS = [
-  { accent: '#22D3EE', glow: 'rgba(34,211,238,0.45)', icon: '➕', name: 'Emergency' },
-  { accent: '#3B82F6', glow: 'rgba(59,130,246,0.45)', icon: '👥', name: 'Business Continuity' },
-  { accent: '#8B5CF6', glow: 'rgba(139,92,246,0.45)', icon: '📈', name: 'Enterprise Risk' },
+  { accent: '#22D3EE', glow: 'rgba(34,211,238,0.45)', icon: '⛑️', frame: pillar1, blend: true },
+  { accent: '#3B82F6', glow: 'rgba(59,130,246,0.45)', icon: '👥', frame: pillar2 },
+  { accent: '#8B5CF6', glow: 'rgba(139,92,246,0.45)', icon: '📈', frame: pillar3 },
 ];
 
-// Skyline silhouettes as [x, width, height] in a 1200×260 viewBox (two depths).
-const BUILDINGS_BACK = [
-  [0, 90, 150], [80, 60, 210], [130, 80, 170], [200, 55, 235], [245, 90, 185],
-  [330, 70, 220], [390, 100, 160], [480, 60, 245], [530, 85, 190], [610, 65, 225],
-  [665, 95, 170], [755, 60, 240], [805, 85, 185], [885, 70, 215], [945, 95, 165],
-  [1035, 60, 230], [1085, 90, 180], [1165, 60, 205],
-];
-const BUILDINGS_FRONT = [
-  [30, 75, 120], [140, 90, 95], [260, 70, 130], [370, 95, 100], [470, 75, 135],
-  [575, 90, 105], [680, 75, 125], [790, 95, 95], [890, 75, 130], [995, 90, 100],
-  [1100, 80, 120],
+// Chapter/duration caption under each card's video thumbnail — cosmetic only,
+// there's no real per-mission video-length field to read this from.
+const VIDEO_META = [
+  { chapter: 'Chapter 1', duration: '05:30' },
+  { chapter: 'Chapter 1', duration: '05:45' },
+  { chapter: 'Chapter 1', duration: '06:10' },
 ];
 
-function CitySkyline({ className }) {
-  return (
-    <svg viewBox="0 0 1200 260" preserveAspectRatio="xMidYMax slice" className={className} aria-hidden>
-      <defs>
-        <pattern id="hub-win" width="14" height="20" patternUnits="userSpaceOnUse">
-          <rect x="4" y="6" width="4" height="7" rx="1" fill="rgba(226,240,255,0.5)" />
-        </pattern>
-      </defs>
-      {BUILDINGS_BACK.map(([x, w, h], i) => (
-        <g key={`b${i}`}>
-          <rect x={x} y={260 - h} width={w} height={h} rx="3" fill="#6d86b3" opacity="0.75" />
-          <rect x={x} y={260 - h} width={w} height={h} rx="3" fill="url(#hub-win)" opacity="0.45" />
-        </g>
-      ))}
-      {BUILDINGS_FRONT.map(([x, w, h], i) => (
-        <g key={`f${i}`}>
-          <rect x={x} y={260 - h} width={w} height={h} rx="3" fill="#48618f" />
-          <rect x={x} y={260 - h} width={w} height={h} rx="3" fill="url(#hub-win)" opacity="0.6" />
-        </g>
-      ))}
-      {/* tree line at the base of the city */}
-      {Array.from({ length: 30 }).map((_, i) => (
-        <ellipse key={`t${i}`} cx={i * 42 + 10} cy={256} rx="26" ry="12" fill="#20402f" opacity="0.9" />
-      ))}
-    </svg>
-  );
-}
-
-// Reflective floor: perspective grid converging on the horizon.
-function GridFloor({ className }) {
-  const spokes = [-350, -200, -60, 80, 210, 340, 500, 660, 790, 920, 1060, 1200, 1350];
-  const rows = [18, 44, 78, 122, 178, 246];
-  return (
-    <svg viewBox="0 0 1000 300" preserveAspectRatio="none" className={className} aria-hidden>
-      <line x1="0" y1="1" x2="1000" y2="1" stroke="rgba(94,205,255,0.35)" strokeWidth="2" />
-      {spokes.map((x) => (
-        <line key={x} x1="500" y1="0" x2={x} y2="300" stroke="rgba(94,205,255,0.14)" strokeWidth="1.5" />
-      ))}
-      {rows.map((y) => (
-        <line key={y} x1="0" y1={y} x2="1000" y2={y} stroke="rgba(94,205,255,0.10)" strokeWidth="1.5" />
-      ))}
-    </svg>
-  );
-}
-
-// The player's kart, rear view, name on the cowl and the plate.
+// The player's kart, rear view — carimage.png, with the player's display
+// name overlaid on the rear bumper's plate panel (the flat black rectangle
+// between the tail lights), same spot the old hand-drawn SVG kart's plate
+// used to carry the name. `name` is whatever the store has for this player,
+// so it's dynamic per player, not a fixed "RACER"/"ALEX" label.
 function Kart({ name }) {
-  const label = (name || 'RACER').toUpperCase().slice(0, 10);
+  const label = (name || 'RACER').toUpperCase().slice(0, 12);
   return (
-    <svg viewBox="0 0 260 200" className="w-full" aria-hidden>
-      <defs>
-        <filter id="kart-glow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="7" />
-        </filter>
-        <linearGradient id="kart-body" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#17233c" />
-          <stop offset="1" stopColor="#0a111f" />
-        </linearGradient>
-      </defs>
-      {/* neon underglow */}
-      <ellipse cx="130" cy="184" rx="112" ry="11" fill="#22D3EE" opacity="0.4" filter="url(#kart-glow)" />
-      {/* driver: hair + shoulders (rear view) */}
-      <rect x="92" y="46" width="76" height="38" rx="15" fill="#1f2a3f" />
-      <circle cx="130" cy="34" r="19" fill="#3b2a1a" />
-      <path d="M111 34a19 19 0 0 1 38 0v6h-38z" fill="#4a3423" />
-      {/* rear cowl band with the racer name */}
-      <rect x="38" y="76" width="184" height="32" rx="11" fill="#0f1a30" stroke="#33415f" strokeWidth="2" />
-      <text x="130" y="98" textAnchor="middle" fill="#ffffff" fontSize="17" fontWeight="800" letterSpacing="4" fontFamily="Poppins, system-ui, sans-serif">
-        {label}
-      </text>
-      {/* wheels */}
-      <rect x="14" y="118" width="42" height="64" rx="12" fill="#04070d" stroke="#1e2836" strokeWidth="2" />
-      <rect x="29" y="128" width="12" height="44" rx="6" fill="#141c2b" />
-      <rect x="204" y="118" width="42" height="64" rx="12" fill="#04070d" stroke="#1e2836" strokeWidth="2" />
-      <rect x="219" y="128" width="12" height="44" rx="6" fill="#141c2b" />
-      {/* body */}
-      <rect x="50" y="104" width="160" height="70" rx="18" fill="url(#kart-body)" stroke="rgba(34,211,238,0.35)" strokeWidth="2" />
-      {/* tail lights */}
-      <rect x="62" y="114" width="20" height="7" rx="3.5" fill="#f43f5e" opacity="0.95" />
-      <rect x="178" y="114" width="20" height="7" rx="3.5" fill="#f43f5e" opacity="0.95" />
-      {/* license plate */}
-      <rect x="92" y="132" width="76" height="24" rx="6" fill="#0b1220" stroke="#4b5f8a" strokeWidth="1.5" />
-      <text x="130" y="149" textAnchor="middle" fill="#dbe9ff" fontSize="12" fontWeight="700" letterSpacing="2" fontFamily="Poppins, system-ui, sans-serif">
-        {label}
-      </text>
-    </svg>
+    <div className="relative w-full">
+      <img src={carImage} alt="" draggable={false} className="w-full h-auto " />
+      {/* the bumper's plate panel sits ~74% down the kart image, centered */}
+      <div
+        className="absolute bottom-20 left-1/2 text-center"
+        
+      >
+        <span
+          className="block text-xs text-white font-semibold leading-none"
+        >
+          {label}
+        </span>
+      </div>
+    </div>
   );
 }
 
-// One neon arch gate per pillar.
-function PillarGate({ mission, pillar, index, onPlay, videoDone }) {
+// One arch gate per pillar — pillar1/2/3.png as the frame artwork, with the
+// mission's title/description/icon and a video thumbnail overlaid inside its
+// glowing window (all dynamic, off `mission`/`pillar`/`video`, not hardcoded
+// per card). The whole card selects it (the bottom "Start Racing Assessment"
+// button acts on the selection); the thumbnail's own play button jumps
+// straight in — same select-vs-double-click-to-start convention as the
+// GameChoiceModal cards elsewhere in the app.
+function PillarGate({ mission, pillar, video, index, isSelected, onSelect, onPlay, videoDone }) {
   // Server-tracked mission completion OR (Emergency Management only) the
   // local "watched the pillar video" flag — either one flips Select → Replay.
   const done = mission.progress?.status === 'COMPLETED' || videoDone;
-  const stars = mission.progress?.starsEarned ?? 0;
-  const maxStars = mission.maxStars || 5;
   return (
     <motion.div
       initial={{ opacity: 0, y: 24 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.12 }}
       whileHover={{ y: -6 }}
-      className="rounded-t-[999px] rounded-b-2xl p-2.5"
-      style={{
-        background: 'linear-gradient(180deg,#3c4a68 0%,#242e49 55%,#1a2338 100%)',
-        boxShadow: '0 24px 50px rgba(3,7,16,0.55)',
-      }}
+      onClick={onSelect}
+      role="button"
+      tabIndex={0}
+      className="relative w-full cursor-pointer"
+      style={{ aspectRatio: '1156 / 1360' }}
     >
-      <div
-        className="h-full rounded-t-[999px] rounded-b-xl flex flex-col items-center text-center px-4 pt-12 pb-5"
+      <img
+        src={pillar.frame}
+        alt=""
+        draggable={false}
+        className="absolute inset-0 w-full h-full pointer-events-none select-none transition"
         style={{
-          background: 'linear-gradient(180deg,#111c34 0%,#0b1426 100%)',
-          border: `2px solid ${pillar.accent}`,
-          boxShadow: `0 0 26px ${pillar.glow}, inset 0 0 30px ${pillar.glow.replace('0.45', '0.18')}`,
+          mixBlendMode: pillar.blend ? 'multiply' : 'normal',
+          filter: isSelected ? 'brightness(1.2) saturate(1.2) drop-shadow(0 0 18px ' + pillar.accent + ')' : 'none',
         }}
-      >
-        <div className="text-4xl drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">{done ? '✅' : pillar.icon}</div>
-        <h3 className="text-white text-sm font-extrabold uppercase leading-tight mt-3">{mission.title}</h3>
-        <p className="text-[#b9c5dd] text-xs mt-2 flex-1 leading-relaxed">{mission.description}</p>
-        <div className="flex gap-0.5 my-3 text-sm" style={{ color: pillar.accent }}>
-          {Array.from({ length: maxStars }).map((_, s) => (
-            <span key={s} className={s < stars ? '' : 'opacity-20'}>★</span>
-          ))}
-        </div>
-        <button
-          onClick={() => onPlay(mission)}
-          className="w-full max-w-[140px] rounded-lg py-2.5 text-xs font-extrabold uppercase tracking-wider text-white transition active:scale-95 hover:brightness-110"
-          style={{ background: pillar.accent, boxShadow: `0 8px 20px ${pillar.glow}` }}
-        >
-          {done ? 'Replay' : 'Select'}
-        </button>
+      />
+
+      {/* content, positioned inside the arch's glowing window */}
+      <div className="absolute flex flex-col items-center text-center p-1" style={{ left: '25%', right: '25%', top: '20%', bottom: '16%' }}>
+        <div className="text-base sm:text-lg leading-none">{done ? '✅' : pillar.icon}</div>
+        <h3 className="text-white text-[9px] sm:text-[11px] font-extrabold uppercase leading-tight mt-1.5">{mission.title}</h3>
+        <p className="text-[#cfe0ff] text-[7px] sm:text-[9px] mt-1 leading-snug overflow-hidden" style={{ maxHeight: '3.4em' }}>
+          {mission.description}
+        </p>
+
+        
       </div>
     </motion.div>
   );
@@ -210,6 +150,9 @@ export default function Hub() {
   // mission while it's showing, null otherwise. See VIDEO_DONE_KEY above.
   const [videoGateMission, setVideoGateMission] = useState(null);
   const [videoDoneIds, setVideoDoneIds] = useState(loadVideoDoneIds);
+  // Which pillar card is highlighted — clicking a card selects it; the
+  // "Start Racing Assessment" button below acts on whichever is selected.
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   // Consume the error from history state so revisiting this entry (back/
   // forward) doesn't resurface a stale notice.
@@ -271,14 +214,6 @@ export default function Hub() {
       <div className="flex items-center justify-between gap-4 mb-5 flex-wrap">
         <div className="flex items-center gap-3">
           <BackButton to="/dashboard" />
-          {/* {bundle?.learningPathId && (
-            <button
-              onClick={() => navigate(`/storyboard/${bundle.learningPathId}?back=/hub`)}
-              className="pill bg-royal/10 text-royal text-sm font-bold hover:bg-royal/20"
-            >
-              📖 Briefing
-            </button>
-          )} */}
         </div>
         <div className="panel rounded-2xl px-5 py-2.5 flex items-center gap-4 text-royal font-semibold">
           <span>⭐ {player?.stars ?? 0}</span>
@@ -311,20 +246,23 @@ export default function Hub() {
       <div className="grid lg:grid-cols-[1fr_290px] gap-5 items-stretch">
         {/* ── The game scene ─────────────────────────────────────────── */}
         <div
-          className="relative overflow-hidden rounded-3xl border border-white/10 min-h-[640px] flex flex-col"
+          className="relative overflow-hidden rounded-3xl border border-white/10 min-h-[680px] flex flex-col"
           style={{
-            background:
-              'linear-gradient(180deg,#c3d8f2 0%,#9db9de 22%,#61789f 40%,#1b2947 58%,#0a1122 78%,#070d1c 100%)',
+            // `cover` on this container: since the image (1754×608, very wide/
+            // short) is proportionally much wider than this box, cover fits it
+            // by HEIGHT — the full sky→road vertical story stays visible, only
+            // the sides get cropped. `contain` was leaving empty space (the
+            // container is taller than a contained image needs) that then
+            // tiled, since background-repeat defaults to repeat — no-repeat
+            // alone wouldn't have fixed that, cover is what actually fills the
+            // box with one untiled copy.
+            backgroundImage: `url(${selectPillarBg})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            backgroundColor: '#dfe7ee',
           }}
         >
-          <CitySkyline className="absolute inset-x-0 w-full h-[46%] top-[12%]" />
-          {/* dark reflective floor + neon grid */}
-          <div
-            className="absolute inset-x-0 bottom-0 h-[46%]"
-            style={{ background: 'linear-gradient(180deg,rgba(7,13,28,0) 0%,#0a1224 16%,#060b18 100%)' }}
-          />
-          <GridFloor className="absolute inset-x-0 bottom-0 h-[42%] w-full" />
-
           {/* header */}
           <div className="relative z-10 p-6 pb-2">
             <div className="flex items-center gap-3 mb-1">
@@ -338,40 +276,58 @@ export default function Hub() {
             <p className="text-[#173a6b] font-bold ml-[52px] text-sm">Learn the essentials before you hit the track.</p>
           </div>
 
-          {/* arch gates */}
-          <div className="relative z-10 grid sm:grid-cols-3 gap-5 md:gap-7 px-6 md:px-10 mt-3 max-w-3xl mx-auto w-full">
+          {/* arch gates — pushed down past the skyline so their stone bases
+              land on the road band in selectpillarbg.png rather than floating
+              in the sky */}
+          <div className="relative z-10 grid sm:grid-cols-3 gap-4 md:gap-6 px-6 md:px-10 mt-16 md:mt-42  w-full">
             {missions.map((m, i) => (
               <PillarGate
                 key={m.id}
                 mission={m}
                 pillar={PILLARS[i % 3]}
+                video={VIDEO_META[i % 3]}
                 index={i}
+                isSelected={selectedIndex === i}
+                onSelect={() => setSelectedIndex(i)}
                 videoDone={videoDoneIds.has(m.id)}
                 onPlay={() => onPlay(m, i)}
               />
             ))}
             {missions.length === 0 && (
-              <div className="sm:col-span-3 rounded-3xl bg-white/10 border border-white/20 backdrop-blur p-10 text-center text-white/70 font-semibold">
+              <div className="sm:col-span-3 rounded-3xl bg-white/60 border border-white/40 backdrop-blur p-10 text-center text-[#0f1b33]/70 font-semibold">
                 Loading pillars…
               </div>
             )}
           </div>
 
           {/* the player's kart, rear view */}
-          <div className="relative z-10 mt-auto -mb-2 w-[220px] md:w-[250px] mx-auto pointer-events-none">
+          <div className="relative z-10 mt-auto mb-4 w-[350px] mx-auto pointer-events-none">
             <Kart name={player?.displayName} />
           </div>
 
-          {/* goal callout */}
-          <div className="absolute z-20 bottom-5 right-5 max-w-[250px] rounded-2xl bg-white/95 shadow-xl px-4 py-3 text-center">
-            <p className="text-xs font-extrabold text-[#0f1b33] leading-snug">
-              🎯 Complete all three pillars to become a {player?.certificateName || 'SDLC Champion'}!
-            </p>
-            {allComplete && (
-              <button onClick={() => navigate('/champion')} className="btn-primary w-full mt-2 !py-2 text-sm">
-                🏆 Claim Champion
-              </button>
+          {/* bottom-right stack: CTA for the selected pillar + goal callout */}
+          <div className="absolute z-20 bottom-5 right-5 max-w-[250px] flex flex-col items-stretch gap-3">
+            {missions[selectedIndex] && (
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => onPlay(missions[selectedIndex], selectedIndex)}
+                className="rounded-2xl px-6 py-3 text-xs font-extrabold uppercase tracking-wide text-[#031018] shadow-xl"
+                style={{ background: 'linear-gradient(135deg,#67e8f9,#22d3ee 55%,#0891b2)' }}
+              >
+              Start Racing Assessment 
+              </motion.button>
             )}
+            <div className="rounded-2xl bg-white/95 shadow-xl px-4 py-3 text-center">
+              <p className="text-xs font-extrabold text-[#0f1b33] leading-snug">
+                🎯 Complete all three pillars to become a {player?.certificateName || 'SDLC Champion'}!
+              </p>
+              {allComplete && (
+                <button onClick={() => navigate('/champion')} className="btn-primary w-full mt-2 !py-2 text-sm">
+                  🏆 Claim Champion
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
