@@ -4,6 +4,28 @@ import { motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 import Garage from '../components/Garage';
 import BackButton from '../components/BackButton';
+import PillarQuizGate from '../components/PillarQuizGate';
+
+// Emergency Management (the first pillar card) doesn't lead into a race at
+// all — it shows the warm-up video/iframe instead, and "completes" the pillar
+// card the moment the player returns from it. That completion has no server
+// record (there's no mission attempt behind it), so it's tracked locally.
+const VIDEO_DONE_KEY = 'rq_pillar_video_done';
+function loadVideoDoneIds() {
+  try {
+    const raw = localStorage.getItem(VIDEO_DONE_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+function saveVideoDoneIds(ids) {
+  try {
+    localStorage.setItem(VIDEO_DONE_KEY, JSON.stringify([...ids]));
+  } catch {
+    // storage unavailable (private mode, quota) — completion just won't survive a reload
+  }
+}
 
 // Screen 2 (choose pillar) + Screen 7 (hub progress). A "game world" scene:
 // hazy city skyline, neon grid floor, three glowing arch gates, and the
@@ -120,8 +142,10 @@ function Kart({ name }) {
 }
 
 // One neon arch gate per pillar.
-function PillarGate({ mission, pillar, index, onPlay }) {
-  const done = mission.progress?.status === 'COMPLETED';
+function PillarGate({ mission, pillar, index, onPlay, videoDone }) {
+  // Server-tracked mission completion OR (Emergency Management only) the
+  // local "watched the pillar video" flag — either one flips Select → Replay.
+  const done = mission.progress?.status === 'COMPLETED' || videoDone;
   const stars = mission.progress?.starsEarned ?? 0;
   const maxStars = mission.maxStars || 5;
   return (
@@ -182,6 +206,10 @@ export default function Hub() {
   const setActiveTournament = useGameStore((s) => s.setActiveTournament);
   // Reason we were sent back here (e.g. a race that couldn't start).
   const [notice, setNotice] = useState(location.state?.error || null);
+  // Emergency Management's "watch, then return" overlay — set to that
+  // mission while it's showing, null otherwise. See VIDEO_DONE_KEY above.
+  const [videoGateMission, setVideoGateMission] = useState(null);
+  const [videoDoneIds, setVideoDoneIds] = useState(loadVideoDoneIds);
 
   // Consume the error from history state so revisiting this entry (back/
   // forward) doesn't resurface a stale notice.
@@ -223,6 +251,19 @@ export default function Hub() {
     if (courseId) params.set('courseId', courseId);
     const qs = params.toString();
     navigate(`/learn/${mission.id}${qs ? `?${qs}` : ''}`);
+  };
+
+  // Emergency Management (pillar index 0 — see PILLARS above) never starts a
+  // race: Select/Replay opens the video overlay instead. Every other pillar
+  // keeps the normal play() flow straight into the mission/game-select screen.
+  const onPlay = (mission, i) => (i % 3 === 0 ? setVideoGateMission(mission) : play(mission));
+
+  const markVideoDone = (missionId) => {
+    setVideoDoneIds((prev) => {
+      const next = new Set(prev).add(missionId);
+      saveVideoDoneIds(next);
+      return next;
+    });
   };
 
   return (
@@ -291,16 +332,23 @@ export default function Hub() {
                 2
               </div>
               <h1 className="text-2xl md:text-3xl font-extrabold text-[#0f1b33] tracking-wide">
-                CHOOSE YOUR PILLAR
+                EXPLORE THE RESILIENCE PILLARS
               </h1>
             </div>
-            <p className="text-[#173a6b] font-bold ml-[52px] text-sm">Select a pillar to begin your mission.</p>
+            <p className="text-[#173a6b] font-bold ml-[52px] text-sm">Learn the essentials before you hit the track.</p>
           </div>
 
           {/* arch gates */}
           <div className="relative z-10 grid sm:grid-cols-3 gap-5 md:gap-7 px-6 md:px-10 mt-3 max-w-3xl mx-auto w-full">
             {missions.map((m, i) => (
-              <PillarGate key={m.id} mission={m} pillar={PILLARS[i % 3]} index={i} onPlay={play} />
+              <PillarGate
+                key={m.id}
+                mission={m}
+                pillar={PILLARS[i % 3]}
+                index={i}
+                videoDone={videoDoneIds.has(m.id)}
+                onPlay={() => onPlay(m, i)}
+              />
             ))}
             {missions.length === 0 && (
               <div className="sm:col-span-3 rounded-3xl bg-white/10 border border-white/20 backdrop-blur p-10 text-center text-white/70 font-semibold">
@@ -330,6 +378,18 @@ export default function Hub() {
         {/* ── Accessories garage sidebar ─────────────────────────────── */}
         <Garage />
       </div>
+
+      {/* Emergency Management's watch-then-return overlay. */}
+      {videoGateMission && (
+        <PillarQuizGate
+          ctaLabel="Return to Pillar →"
+          showBack={false}
+          onNext={() => {
+            markVideoDone(videoGateMission.id);
+            setVideoGateMission(null);
+          }}
+        />
+      )}
     </div>
   );
 }

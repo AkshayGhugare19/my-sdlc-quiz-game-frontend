@@ -1,13 +1,13 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import gameBg from '../assets/game/game_bg.png';
 
-// Sits between "pillar chosen" and the game-selection screen (GameChoiceModal)
-// for every race entry point except Quick Race (Race.jsx skips straight to the
-// picker there). Embeds the external pillar quiz; Next always stays enabled —
-// this is a different origin (kpmg-quiz.netlify.app), so there's no
-// postMessage/shared code to detect in-quiz completion from here. The player
-// clicks Next themselves once they're done.
-export default function PillarQuizGate({ onNext, onBack }) {
+// The Emergency Management pillar's "watch, then return" gate — shown by
+// Hub.jsx in place of navigating into that pillar's mission (see the
+// videoGateMission overlay there). Embeds the external pillar quiz/video; the
+// primary button always stays enabled — kpmg-quiz.netlify.app is a different
+// origin, so there's no postMessage/shared code to detect in-content
+// completion from here. The player clicks through themselves once they're done.
+export default function PillarQuizGate({ onNext, onBack, ctaLabel = 'Next →', showBack = true }) {
   return (
     <AnimatePresence>
       <motion.div
@@ -32,16 +32,13 @@ export default function PillarQuizGate({ onNext, onBack }) {
           initial={{ scale: 0.94, y: 16, opacity: 0 }}
           animate={{ scale: 1, y: 0, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-          className="relative z-10 w-full max-w-3xl my-6 rounded-3xl p-6 md:p-8 border border-white/10 bg-black/10 backdrop-blur-[2px] shadow-2xl"
+          className="relative z-10 w-full max-w-5xl my-6 rounded-3xl p-6 md:p-8 border border-white/10 bg-black/10 backdrop-blur-[2px] shadow-2xl"
         >
           <div className="text-center mb-5">
-            <div className="inline-flex items-center gap-2 text-cyan-300 font-bold text-xs tracking-[0.3em] mb-2">
-              📋 WARM-UP QUIZ 📋
+            <div className="inline-flex items-center gap-2 text-cyan-300 font-semibold text-md tracking-[0.3em] mb-2">
+              Emergency Management (OSH)
             </div>
-            <h1 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wide">Before the race</h1>
-            <p className="text-white/50 font-medium mt-1.5">
-              Take a moment with this quiz, then hit Next to pick your game.
-            </p>
+            
           </div>
 
           {/* Responsive iframe frame — fills the available width, holds a 4:3-ish
@@ -58,13 +55,15 @@ export default function PillarQuizGate({ onNext, onBack }) {
             />
           </div>
 
-          <div className="flex items-center justify-between gap-3 mt-6">
-            <button
-              onClick={onBack}
-              className="rounded-2xl px-5 py-3 text-sm font-bold uppercase tracking-wide text-white/70 border border-white/15 hover:bg-white/5 transition"
-            >
-              ← Back
-            </button>
+          <div className={`flex items-center gap-3 mt-6 ${showBack ? 'justify-between' : 'justify-center'}`}>
+            {showBack && (
+              <button
+                onClick={onBack}
+                className="rounded-2xl px-5 py-3 text-sm font-bold uppercase tracking-wide text-white/70 border border-white/15 hover:bg-white/5 transition"
+              >
+                ← Back
+              </button>
+            )}
             <motion.button
               whileHover={{ scale: 1.015 }}
               whileTap={{ scale: 0.98 }}
@@ -75,11 +74,11 @@ export default function PillarQuizGate({ onNext, onBack }) {
                 boxShadow: '0 0 0 1px rgba(103,232,249,0.5), 0 18px 40px rgba(34,211,238,0.35)',
               }}
             >
-              Next →
+              {ctaLabel}
             </motion.button>
           </div>
           <p className="text-center text-white/35 text-xs mt-3 font-medium">
-            Done whenever you are — Next takes you to game selection.
+            Done whenever you are.
           </p>
         </motion.div>
       </motion.div>

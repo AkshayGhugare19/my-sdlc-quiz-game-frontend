@@ -6,7 +6,6 @@ import { api } from '../services/api';
 import { useGameStore } from '../store/gameStore';
 import BackButton from '../components/BackButton';
 import GameChoiceModal from '../components/GameChoiceModal';
-import PillarQuizGate from '../components/PillarQuizGate';
 import UnityRaceFrame from '../components/UnityRaceFrame';
 import CarPreview from './CarPreview';
 import { USE_UNITY_RACE } from '../config/unityRace';
@@ -112,10 +111,6 @@ export default function Race() {
   const carDesign = useGameStore((s) => s.carDesign);
   const setCarDesign = useGameStore((s) => s.setCarDesign);
   const [gameChoice, setGameChoice] = useState(null);
-  // Pillar warm-up quiz (external iframe) shown ahead of game selection for
-  // every entry point except Quick Race — see the gate right before
-  // GameChoiceModal below.
-  const [quizGateDone, setQuizGateDone] = useState(false);
   // Escape hatch off the embedded Unity build for this run only (offered when
   // the handoff/iframe fails) — drops back to the in-repo three.js circuit.
   const [forceClassic, setForceClassic] = useState(false);
@@ -422,17 +417,11 @@ export default function Race() {
 
   // Pre-race prompt: choose a game before anything boots. This gate sits ahead
   // of every entry point (mission / course / bundle / quick / tournament /
-  // replay) because they all funnel through this one screen. Every entry point
-  // except Quick Race first shows the pillar warm-up quiz (external iframe).
+  // replay) because they all funnel through this one screen. The pillar
+  // warm-up video/iframe lives on the Hub pillar-select screen now (Emergency
+  // Management only) — it never reaches this route, so every mission that
+  // does land here goes straight to game selection.
   if (!gameChoice) {
-    if (!isQuickRace && !quizGateDone) {
-      return (
-        <PillarQuizGate
-          onNext={() => setQuizGateDone(true)}
-          onBack={() => navigate(-1)}
-        />
-      );
-    }
     return (
       <GameChoiceModal
         defaultGame={gameType}

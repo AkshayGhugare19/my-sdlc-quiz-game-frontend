@@ -4,11 +4,11 @@ import gameBanner from '../assets/game/game_banner.png';
 import gameBg from '../assets/game/game_bg.png';
 
 // Pre-race prompt: pick which game to answer the quiz in. Shown by Race.jsx
-// before any mission / course / tournament / quick race boots (after the
-// pillar-quiz iframe gate, for every entry point except Quick Race). Games are
-// grouped into a "2D Games" section (Car Game, Subway Surfer — both run the
-// in-repo three.js engine) and a "3D Game" section (Racing — the hosted Unity
-// build, or the three.js circuit as its backup).
+// before any mission / course / tournament / quick race boots. Games are
+// grouped into a "Low-Poly 3D Game Style" section (Car Game, Subway Surfer —
+// both run the in-repo three.js engine) and a "High-Fidelity 3D Game Style"
+// section (Racing — the hosted Unity build, or the three.js circuit as its
+// backup).
 // Same dark NFS-showroom look as CarPreview.jsx/Result.jsx, so the whole
 // pre-race → race → post-race flow reads as one continuous presentation.
 
@@ -87,7 +87,7 @@ function SubwayArt() {
 
 // `hidden: true` keeps a game defined but off the picker — the mode still works
 // everywhere else (Race.jsx, the store), it just can't be chosen here.
-// `category` only drives which section of this screen a card renders in — it
+// `game_style` only drives which section of this screen a card renders in — it
 // doesn't touch Race.jsx's routing (that still switches on `key`).
 const GAMES = [
   {
@@ -96,16 +96,16 @@ const GAMES = [
     tagline: 'Steer a race car down a sunset circuit',
     image: gameBanner,
     accent: '#f43f5e',
-    category: '3d',
+    game_style: 'High-Fidelity 3D',
   },
   {
     key: 'racing-car',
-    name: 'RacingCar',
+    name: 'Racing Car',
     tagline: 'Steer a race car down a sunset circuit',
     chips: ['🏎️ Race car', '🛣️ Road & lanes', '🏁 Grand-prix vibe'],
     Art: RacingArt,
     accent: '#f59e0b',
-    category: '2d',
+    game_style: 'Low-Poly 3D',
   },
   {
     key: 'subway',
@@ -114,17 +114,16 @@ const GAMES = [
     chips: ['🏃 Track runner', '🚉 Stations & trains', '🌆 City & bridges'],
     Art: SubwayArt,
     accent: '#22d3ee',
-    category: '2d',
+    game_style: 'Low-Poly 3D',
   },
 ];
 
 const VISIBLE_GAMES = GAMES.filter((g) => !g.hidden);
-const GAMES_2D = VISIBLE_GAMES.filter((g) => g.category === '2d');
-const GAMES_3D = VISIBLE_GAMES.filter((g) => g.category === '3d');
+const GAME_3D = VISIBLE_GAMES;
 
 // One selectable game card — used by both the 2D and 3D sections below.
 function GameCard({ game, isSel, onSelect, onStart }) {
-  const { name, tagline, chips, image, Art, accent } = game;
+  const { name, tagline, chips, image, Art, accent, game_style } = game;
   return (
     <motion.button
       whileHover={{ scale: 1.02, y: -3 }}
@@ -151,6 +150,7 @@ function GameCard({ game, isSel, onSelect, onStart }) {
             {isSel ? '✓' : ''}
           </span>
         </div>
+        <div>{game_style}</div>
         <p className="text-white/50 text-sm font-medium mt-0.5">{tagline}</p>
         {chips?.length ? (
           <div className="flex flex-wrap gap-1.5 mt-3">
@@ -166,12 +166,12 @@ function GameCard({ game, isSel, onSelect, onStart }) {
   );
 }
 
-// Small section heading with a pill badge (2D/3D) and a divider rule, so the
-// two categories read as clearly separate groups rather than one long grid.
+// Small section heading with a pill badge and a divider rule, so the two
+// categories read as clearly separate groups rather than one long grid.
 function SectionHeading({ badge, title, sub }) {
   return (
     <div className="flex items-center gap-3 mb-3">
-      <span className="text-[10px] font-black tracking-[0.2em] text-[#031018] bg-cyan-300 rounded-full px-2.5 py-1">
+      <span className="whitespace-nowrap text-[10px] font-black tracking-[0.15em] text-[#031018] bg-cyan-300 rounded-full px-2.5 py-1">
         {badge}
       </span>
       <div>
@@ -243,9 +243,8 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
 
           <div className="space-y-6">
             <section>
-              <SectionHeading badge="2D" title="2D Games" sub="Flat-track arcade runs, drawn in three.js" />
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {GAMES_2D.map((game) => (
+                {GAME_3D.map((game) => (
                   <GameCard
                     key={game.key}
                     game={game}
@@ -257,20 +256,7 @@ export default function GameChoiceModal({ defaultGame = 'racing', onChoose }) {
               </div>
             </section>
 
-            <section>
-              <SectionHeading badge="3D" title="3D Game" sub="Full circuit, real depth and camera angles" />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {GAMES_3D.map((game) => (
-                  <GameCard
-                    key={game.key}
-                    game={game}
-                    isSel={selected === game.key}
-                    onSelect={() => setSelected(game.key)}
-                    onStart={() => onChoose(game.key)}
-                  />
-                ))}
-              </div>
-            </section>
+            
           </div>
 
           <motion.button
