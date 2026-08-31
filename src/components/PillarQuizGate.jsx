@@ -34,19 +34,20 @@ export default function PillarQuizGate({ onNext, onBack, ctaLabel = 'Next →', 
           transition={{ type: 'spring', stiffness: 260, damping: 24 }}
           className="relative z-10 w-full max-w-5xl my-6 rounded-3xl p-6 md:p-8 border border-white/10 bg-black/10 backdrop-blur-[2px] shadow-2xl"
         >
-          <div className="text-center mb-5">
-            <div className="inline-flex items-center gap-2 text-cyan-300 font-semibold text-md tracking-[0.3em] mb-2">
-              Emergency Management (OSH)
-            </div>
-            
-          </div>
-
+          
           {/* Responsive iframe frame — fills the available width, holds a 4:3-ish
               aspect ratio so it never balloons to fill a tall viewport. */}
           <div
             className="w-full rounded-2xl overflow-hidden border border-white/15 bg-black/40 shadow-xl"
-            style={{ aspectRatio: '4 / 3', maxHeight: '65vh' }}
+            style={{ aspectRatio: '4 / 3', maxHeight: '80vh' }}
           >
+            <div className="absolute z-10 w-[250px]  rounded-3xl p-8 border border-white/10 bg-[#096054] shadow-2xl bottom-36 right-12">
+              <div className="text-center ">
+                <div className="inline-flex items-center text-white font-semibold text-[10px]">
+                  Emergency Management (OSH)
+                </div>
+              </div>
+            </div>
             <iframe
               src="https://kpmg-quiz.netlify.app/"
               title="Iframe Example"

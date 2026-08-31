@@ -134,17 +134,24 @@ function GameCard({ game, isSel, onSelect, onStart }) {
       whileTap={{ scale: 0.98 }}
       onClick={onSelect}
       onDoubleClick={onStart}
-      className="text-left rounded-2xl overflow-hidden border-2 transition bg-black/40 w-full"
+      className="text-left rounded-2xl overflow-hidden border-2 transition bg-black/40 w-full h-full flex flex-col"
       style={{
         borderColor: isSel ? accent : 'rgba(255,255,255,0.12)',
         boxShadow: isSel ? `0 0 0 3px ${accent}33, 0 18px 34px rgba(2,8,20,0.5)` : '0 10px 24px rgba(2,8,20,0.35)',
       }}
     >
-      <div className="h-32 md:h-36 w-full relative">
-        {image ? <img src={image} alt="" className="w-full h-full object-cover" /> : <Art />}
+      {/* fixed-height, clipped image band — identical for every card no
+          matter each source image's own aspect ratio (object-cover crops to
+          fill, never stretches/overflows this box) */}
+      <div className="h-32 md:h-36 w-full relative overflow-hidden shrink-0">
+        {image ? (
+          <img src={image} alt="" className="block w-full h-full object-cover object-center" />
+        ) : (
+          <Art />
+        )}
         <div className="absolute inset-0" style={{ boxShadow: 'inset 0 -18px 22px -6px rgba(0,0,0,0.35)' }} />
       </div>
-      <div className="p-4">
+      <div className="p-4 flex-1 flex flex-col">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-extrabold text-white uppercase tracking-wide">{name}</h2>
           <span
@@ -154,7 +161,9 @@ function GameCard({ game, isSel, onSelect, onStart }) {
             {isSel ? '✓' : ''}
           </span>
         </div>
-        <div>{game_style}</div>
+        <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: accent }}>
+          {game_style}
+        </div>
         <p className="text-white/50 text-sm font-medium mt-0.5">{tagline}</p>
         {chips?.length ? (
           <div className="flex flex-wrap gap-1.5 mt-3">
