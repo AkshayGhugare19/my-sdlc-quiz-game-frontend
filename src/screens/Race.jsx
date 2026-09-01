@@ -114,11 +114,6 @@ export default function Race() {
   // Escape hatch off the embedded Unity build for this run only (offered when
   // the handoff/iframe fails) — drops back to the in-repo three.js circuit.
   const [forceClassic, setForceClassic] = useState(false);
-  // The Unity build has no bridge to tell us "race complete" — the player taps
-  // "Finish Race" themselves once they see it end, and we show our own
-  // congratulations beat (see unityFinished branch below) since we never get a
-  // score payload back to populate the normal Result screen with.
-  const [unityFinished, setUnityFinished] = useState(false);
   // Racing now plays inside the hosted Unity WebGL build; the three.js path
   // below is untouched and comes back by flipping USE_UNITY_RACE.
   const playInUnity = USE_UNITY_RACE && gameChoice === 'racing' && !forceClassic;
@@ -443,7 +438,7 @@ export default function Race() {
   // exchange it for its own token instead of reading our sessionStorage. This
   // sits ahead of the car showcase + three.js scene, which stay below as the
   // backup path (USE_UNITY_RACE=false, or "Play the classic race" on failure).
-  if (playInUnity && !unityFinished) {
+  if (playInUnity) {
     return (
       <UnityRaceFrame
         title={boot?.mission?.title || 'Racing'}
@@ -453,49 +448,18 @@ export default function Race() {
           }
         }}
         onFallback={() => setForceClassic(true)}
-        onFinish={() => {
-          // Unity already graded + saved this run server-side; just pull the
-          // player's updated wallet/progress before showing the congrats card.
-          refreshProfile();
-          setUnityFinished(true);
+        onFinish={async () => {
+          // Unity grades + saves its own run server-side but never reports the
+          // score back here, so there's no per-question payload to show — pull
+          // the player's updated wallet/progress and land on the same Result
+          // screen the other games use, in its "stats unavailable" mode.
+          await refreshProfile();
+          navigate('/result', {
+            state: { result: { statsUnavailable: true }, race: { bundleId, quick: isQuickRace, tournament: isTournamentRace } },
+            replace: true,
+          });
         }}
       />
-    );
-  }
-
-  // Congratulations beat for the Unity race, standing in for the normal
-  // Result screen (which needs a per-question score payload Unity never
-  // sends back here) — mirrors its "race complete" framing and exit paths.
-  if (unityFinished) {
-    const continueTo = isQuickRace || isTournamentRace ? '/dashboard' : '/hub';
-    return (
-      <div
-        className="fixed inset-0 z-50 grid place-items-center p-6 text-center"
-        style={{ background: 'radial-gradient(1200px 800px at 50% -10%, #131c33 0%, #05070d 55%, #020306 100%)' }}
-      >
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: 'spring', stiffness: 200, damping: 16 }}
-          className="max-w-md rounded-3xl border border-white/10 bg-black/30 backdrop-blur-sm p-8"
-        >
-          <div className="inline-flex items-center gap-2 text-cyan-300 font-bold text-xs md:text-sm tracking-[0.3em]">
-            🏁 RACE COMPLETE 🏁
-          </div>
-          <div className="text-3xl md:text-4xl font-black text-white mt-4">Nice driving!</div>
-          <p className="text-white/50 font-medium mt-2">
-            Your run has been saved. Head back to see your updated stars, coins and XP.
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate(continueTo)}
-            className="mt-6 w-full rounded-xl px-4 py-3 font-black uppercase tracking-wide text-[#031018]"
-            style={{ background: 'linear-gradient(135deg,#67e8f9,#22d3ee 55%,#0891b2)', boxShadow: '0 0 0 1px rgba(103,232,249,0.5), 0 12px 28px rgba(34,211,238,0.3)' }}
-          >
-            Continue →
-          </button>
-        </motion.div>
-      </div>
     );
   }
 

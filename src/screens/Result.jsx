@@ -45,18 +45,25 @@ export default function Result() {
   const design = CAR_DESIGNS.find((d) => d.id === carDesignId) ?? CAR_DESIGNS.find((d) => d.id === DEFAULT_CAR_DESIGN);
   const portrait = avatarImage(avatar?.key);
 
-  const rows = [
-    { icon: '❓', label: 'Questions Answered', value: `${r.questionsTotal}/${r.questionsTotal}` },
-    { icon: '✅', label: 'Correct Answers', value: `${r.correctAnswers}/${r.questionsTotal}` },
-    { icon: '⭐', label: 'Knowledge Stars', value: `${r.starsEarned}/${r.maxStars}` },
-    // Stars newly credited to the wallet this run (replays only credit the
-    // improvement over the previous best — the server tells us the delta).
-    ...(r.starsGained > 0 ? [{ icon: '✨', label: 'New Stars Gained', value: `+${r.starsGained}` }] : []),
-    // Coins minted this run (10 per newly gained star + first-pass bonus).
-    ...(r.coinsEarned > 0 ? [{ icon: '🪙', label: 'Coins Earned', value: `+${r.coinsEarned}` }] : []),
-    ...(r.xpEarned != null ? [{ icon: '⚡', label: 'XP Earned', value: `+${r.xpEarned}` }] : []),
-    { icon: '⏱️', label: 'Time Remaining', value: mmss(r.timeRemainingSec) },
-  ];
+  // Externally-hosted games (the Unity racing build) grade + save their own
+  // run server-side but report no per-question payload back to us — there's
+  // nothing truthful to put in a scorecard, so skip it rather than show
+  // fabricated/undefined numbers. The rest of this screen (banner, showcase,
+  // continue/champion buttons) still applies exactly as for a scored run.
+  const rows = r.statsUnavailable
+    ? []
+    : [
+        { icon: '❓', label: 'Questions Answered', value: `${r.questionsTotal}/${r.questionsTotal}` },
+        { icon: '✅', label: 'Correct Answers', value: `${r.correctAnswers}/${r.questionsTotal}` },
+        { icon: '⭐', label: 'Knowledge Stars', value: `${r.starsEarned}/${r.maxStars}` },
+        // Stars newly credited to the wallet this run (replays only credit the
+        // improvement over the previous best — the server tells us the delta).
+        ...(r.starsGained > 0 ? [{ icon: '✨', label: 'New Stars Gained', value: `+${r.starsGained}` }] : []),
+        // Coins minted this run (10 per newly gained star + first-pass bonus).
+        ...(r.coinsEarned > 0 ? [{ icon: '🪙', label: 'Coins Earned', value: `+${r.coinsEarned}` }] : []),
+        ...(r.xpEarned != null ? [{ icon: '⚡', label: 'XP Earned', value: `+${r.xpEarned}` }] : []),
+        { icon: '⏱️', label: 'Time Remaining', value: mmss(r.timeRemainingSec) },
+      ];
 
   const bundleDone = r.bundle?.bundleCompleted;
   const missionId = r.missionId || r.mission?.id;
@@ -173,6 +180,12 @@ export default function Result() {
             transition={{ delay: 0.15 }}
             className="rounded-3xl border border-white/10 bg-black/30 backdrop-blur-sm p-5 md:p-6"
           >
+            {r.statsUnavailable && (
+              <div className="rounded-xl bg-white/5 border border-white/10 text-white/60 px-4 py-3 text-sm font-medium mb-2.5">
+                🏁 Your run has been saved — check your profile for updated stars, coins and XP.
+              </div>
+            )}
+
             <div className="space-y-2.5">
               {rows.map((row, i) => (
                 <motion.div
@@ -208,7 +221,7 @@ export default function Result() {
                 onClick={() => navigate(replayTo ?? continueTo)}
                 className="flex-1 rounded-xl px-4 py-3 font-bold text-white/90 bg-white/10 hover:bg-white/15 border border-white/15 transition"
               >
-                {race.quick ? 'RACE AGAIN' : race.tournament ? '🏆 TOURNAMENTS' : 'REPLAY PILLAR'}
+                {race.quick ? 'RACE AGAIN' : race.tournament ? '🏆 TOURNAMENTS' : replayTo ? 'REPLAY PILLAR' : 'HUB'}
               </button>
               {bundleDone ? (
                 <button
