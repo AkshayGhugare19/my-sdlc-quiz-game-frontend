@@ -30,7 +30,7 @@ function Shell({ children }) {
   );
 }
 
-export default function UnityRaceFrame({ title = 'Racing', onQuit, onFallback }) {
+export default function UnityRaceFrame({ title = 'Racing', onQuit, onFallback, onFinish }) {
   const [url, setUrl] = useState(null);
   const [error, setError] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -149,6 +149,20 @@ export default function UnityRaceFrame({ title = 'Racing', onQuit, onFallback })
         >
           <span className="text-base leading-none">←</span>
           Quit
+        </button>
+      )}
+
+      {/* The Unity build grades and completes its own session server-side but
+          has no bridge back to this page to say "the race just ended" — so the
+          player confirms it themselves once they see their in-game result. */}
+      {onFinish && loaded && (
+        <button
+          type="button"
+          onClick={onFinish}
+          className="absolute top-4 right-4 z-10 pill text-[#031018] font-black uppercase tracking-wide"
+          style={{ background: 'linear-gradient(135deg,#67e8f9,#22d3ee 55%,#0891b2)' }}
+        >
+          🏁 Finish Race
         </button>
       )}
     </div>
